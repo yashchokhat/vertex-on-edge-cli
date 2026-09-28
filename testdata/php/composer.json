@@ -1,0 +1,6 @@
+{
+    "name": "my-php-app",
+    "require": {
+        "php": ">=8.1"
+    }
+}
