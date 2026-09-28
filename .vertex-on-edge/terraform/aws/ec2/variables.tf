@@ -20,8 +20,13 @@ variable "app_port" {
   default     = 3000
 }
 
-variable "github_repo" {
-  description = "GitHub repository (owner/repo)"
+variable "github_owner" {
+  description = "GitHub repository owner"
+  type        = string
+}
+
+variable "github_repository" {
+  description = "GitHub repository name"
   type        = string
 }
 
