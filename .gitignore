@@ -53,3 +53,10 @@ node_modules/
 terraform.tfstate
 terraform.tfstate.backup
 node_modules/
+
+# Vertex-on-Edge
+.terraform/
+.terraform.*
+terraform.tfstate
+terraform.tfstate.backup
+node_modules/

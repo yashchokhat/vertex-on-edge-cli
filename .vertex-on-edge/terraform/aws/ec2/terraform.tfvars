@@ -1,4 +1,3 @@
-project_name = "deploy-new"
 github_owner = "yashchokhat"
 github_repository = "vertex-on-edge-cli"
 create_oidc_provider = "false"
@@ -6,3 +5,4 @@ oidc_provider_arn = "arn:aws:iam::751667630303:oidc-provider/token.actions.githu
 instance_type = "t3.micro"
 app_port = "3000"
 aws_region = "ap-south-1"
+project_name = "deploy-new"
