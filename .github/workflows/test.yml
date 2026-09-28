@@ -10,12 +10,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     - name: Use Node.js
       uses: actions/setup-node@v3
       with:
         node-version: '18.x'
     - run: npm ci
-    - run: npx cypress run || echo 'Cypress tests failed or no tests found'
     - run: npx playwright install --with-deps
     - run: npx playwright test --pass-with-no-tests
