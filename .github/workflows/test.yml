@@ -16,4 +16,4 @@ jobs:
       with:
         node-version: '18.x'
     - run: npm ci
-    - run: npx cypress run || echo 'Cypress tests failed or no tests found'
+    - run: npm run test -- --passWithNoTests
