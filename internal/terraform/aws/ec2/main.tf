@@ -2,9 +2,13 @@ provider "aws" {
   region = var.aws_region
 }
 
+resource "random_id" "suffix" {
+  byte_length = 3
+}
+
 # Create ECR Repository
 resource "aws_ecr_repository" "app" {
-  name                 = var.project_name
+  name                 = "${var.project_name}-${random_id.suffix.hex}"
   image_tag_mutability = "MUTABLE"
 
   image_scanning_configuration {
@@ -122,7 +126,7 @@ resource "aws_security_group" "app_sg" {
 
 # IAM Role for EC2
 resource "aws_iam_role" "ec2_role" {
-  name = "${var.project_name}-ec2-role"
+  name = "${var.project_name}-ec2-role-${random_id.suffix.hex}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -146,7 +150,7 @@ resource "aws_iam_role_policy_attachment" "ecr_read" {
 
 # Instance Profile
 resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "${var.project_name}-profile"
+  name = "${var.project_name}-profile-${random_id.suffix.hex}"
   role = aws_iam_role.ec2_role.name
 }
 
@@ -157,7 +161,7 @@ resource "tls_private_key" "ssh_key" {
 }
 
 resource "aws_key_pair" "app_key" {
-  key_name   = "${var.project_name}-key"
+  key_name   = "${var.project_name}-key-${random_id.suffix.hex}"
   public_key = tls_private_key.ssh_key.public_key_openssh
 }
 
@@ -201,36 +205,6 @@ resource "aws_iam_openid_connect_provider" "github" {
   count           = var.create_oidc_provider ? 1 : 0
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1", "1c58a3a8518e8759bf075b76b750d4f2df264fcd"]
+  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1", "1c58a3a8518e8759bf075b76b750d4f2df264fcd", "1b511abead59c6ce207077c0bf0e0043b1382612", "06d927fecd0a84aeba28aad1d808139470fe95c3", "ffffffffffffffffffffffffffffffffffffffff"]
 }
 
-resource "aws_iam_role" "github_actions_role" {
-  name = "${var.project_name}-github-actions-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRoleWithWebIdentity"
-        Effect = "Allow"
-        Principal = {
-          Federated = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : var.oidc_provider_arn
-        }
-        Condition = {
-          StringLike = {
-            "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*"
-          }
-          StringEquals = {
-            "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          }
-        }
-      }
-    ]
-  })
-}
-
-# Policy allowing GitHub Actions to push to ECR and deploy to EC2
-resource "aws_iam_role_policy_attachment" "github_actions_admin" {
-  role       = aws_iam_role.github_actions_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
-}

@@ -8,9 +8,30 @@ import (
 	"sync"
 )
 
-// InitAndPush initializes a git repository, creates a GitHub repo if needed, sets secrets, and pushes.
+// InitAndPush is the main orchestrator function for GitHub synchronization
 func InitAndPush(projectPath, projectName string, secrets map[string]string, updateProgress func(string)) error {
-	// 1. Add files first so they are included if gh repo create pushes
+	if err := EnsureGitRepo(projectPath, updateProgress); err != nil {
+		return err
+	}
+	
+	pushUrl, err := EnsureGitHubRepo(projectPath, projectName, updateProgress)
+	if err != nil {
+		return err
+	}
+	
+	if err := ConfigureSecrets(projectPath, secrets, updateProgress); err != nil {
+		return err
+	}
+	
+	if err := SyncAndPush(projectPath, pushUrl, updateProgress); err != nil {
+		return err
+	}
+	
+	return nil
+}
+
+// EnsureGitRepo initializes the local git repository and creates the initial commit
+func EnsureGitRepo(projectPath string, updateProgress func(string)) error {
 	updateProgress("Staging files...")
 
 	// Check if git repo exists, init if not
@@ -22,7 +43,7 @@ func InitAndPush(projectPath, projectName string, secrets map[string]string, upd
 		}
 	}
 
-	// 1.5 Ensure .gitignore contains .terraform and other heavy/secret files
+	// Ensure .gitignore contains .terraform and other heavy/secret files
 	gitignorePath := projectPath + "/.gitignore"
 	ignoreContent := "\n# Vertex-on-Edge\n.terraform/\n.terraform.*\nterraform.tfstate\nterraform.tfstate.backup\nnode_modules/\n"
 
@@ -31,8 +52,6 @@ func InitAndPush(projectPath, projectName string, secrets map[string]string, upd
 		f.WriteString(ignoreContent)
 		f.Close()
 	}
-
-	updateProgress("Staging files...")
 
 	// Un-track files that might have been accidentally added before we created the gitignore
 	rmCmd := exec.Command("git", "rm", "-r", "--cached", ".")
@@ -43,29 +62,70 @@ func InitAndPush(projectPath, projectName string, secrets map[string]string, upd
 	addCmd.Dir = projectPath
 	addCmd.Run()
 
+	// Ensure git identity is configured to prevent commit failures on fresh machines
+	if err := exec.Command("git", "config", "user.email").Run(); err != nil {
+		emailCmd := exec.Command("git", "-C", projectPath, "config", "user.email", "deploy@vertexonedge.local")
+		emailCmd.Run()
+		nameCmd := exec.Command("git", "-C", projectPath, "config", "user.name", "Vertex-on-Edge Automator")
+		nameCmd.Run()
+	}
+
 	commitCmd := exec.Command("git", "commit", "-m", "ci: initialize vertex-on-edge deployment pipeline")
 	commitCmd.Dir = projectPath
 	commitCmd.Run() // Ignore errors if nothing to commit
 
-	// 2. Check if github remote exists
-	updateProgress("Checking GitHub remote...")
-	urlCmd := exec.Command("git", "remote", "get-url", "origin")
-	urlCmd.Dir = projectPath
-	err = urlCmd.Run()
-	if err != nil {
+	return nil
+}
+
+// EnsureGitHubRepo verifies the repo exists on GitHub, creates it if not, and sets up the remote
+func EnsureGitHubRepo(projectPath, projectName string, updateProgress func(string)) (string, error) {
+	updateProgress(fmt.Sprintf("Verifying repository '%s' on GitHub...", projectName))
+	var originalRemote string
+	urlOut, err := exec.Command("gh", "repo", "view", projectName, "--json", "url", "-q", ".url").Output()
+	
+	if err == nil {
+		originalRemote = strings.TrimSpace(string(urlOut))
+	} else {
+		// Repo does not exist on GitHub, create it
 		updateProgress(fmt.Sprintf("Creating GitHub repository '%s'...", projectName))
-		// Create and push
-		createCmd := exec.Command("gh", "repo", "create", projectName, "--private", "--source=.", "--remote=origin", "--push")
+		createCmd := exec.Command("gh", "repo", "create", projectName, "--private")
 		createCmd.Dir = projectPath
-		// Do not bind stdin to avoid blocking on prompts silently.
-		// If it needs auth, it should have been done in pre-flight.
-		out, err := createCmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("failed to create github repo: %w\nOutput: %s", err, string(out))
+		if out, err := createCmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("failed to create github repo: %w\nOutput: %s", err, string(out))
 		}
+		
+		// Retrieve the URL of the newly created repo
+		urlOut2, err2 := exec.Command("gh", "repo", "view", projectName, "--json", "url", "-q", ".url").Output()
+		if err2 != nil {
+			return "", fmt.Errorf("failed to retrieve newly created repo url: %w", err2)
+		}
+		originalRemote = strings.TrimSpace(string(urlOut2))
 	}
 
-	// 3. Set Secrets securely in parallel
+	// Ensure local git 'origin' points to the definitive GitHub HTTPS URL
+	exec.Command("git", "-C", projectPath, "remote", "remove", "origin").Run()
+	exec.Command("git", "-C", projectPath, "remote", "add", "origin", originalRemote).Run()
+
+	// Convert SSH URL to HTTPS URL for seamless pushes
+	pushUrl := originalRemote
+	if strings.HasPrefix(originalRemote, "git@github.com:") {
+		repoPart := strings.TrimPrefix(originalRemote, "git@github.com:")
+		pushUrl = "https://github.com/" + repoPart
+	}
+
+	// Verify GitHub API authentication via HTTPS
+	updateProgress("Verifying GitHub API authentication...")
+	lsCmd := exec.Command("git", "ls-remote", pushUrl)
+	lsCmd.Dir = projectPath
+	if lsOut, err := lsCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("GitHub authentication failed during ls-remote.\nOutput: %s", string(lsOut))
+	}
+
+	return pushUrl, nil
+}
+
+// ConfigureSecrets sets up the necessary GitHub Action secrets
+func ConfigureSecrets(projectPath string, secrets map[string]string, updateProgress func(string)) error {
 	updateProgress("Configuring GitHub secrets...")
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(secrets))
@@ -92,27 +152,51 @@ func InitAndPush(projectPath, projectName string, secrets map[string]string, upd
 		}
 	}
 
-	// 4. Final Push (if there are new commits after repo creation)
-	updateProgress("Pushing final changes to GitHub...")
-	pushCmd := exec.Command("git", "push", "-u", "origin", "HEAD")
+	return nil
+}
+
+// SyncAndPush proactively merges remote changes and pushes the local repository
+func SyncAndPush(projectPath, pushUrl string, updateProgress func(string)) error {
+	updateProgress("Checking for remote changes (auto-merge)...")
+	
+	// Proactively pull remote changes before attempting push
+	// -X ours favors local modifications (like .gitignore) during unrelated history collisions
+	pullCmd := exec.Command("git", "pull", "--no-rebase", "-X", "ours", pushUrl, "main", "--allow-unrelated-histories")
+	pullCmd.Dir = projectPath
+	if pullOut, pullErr := pullCmd.CombinedOutput(); pullErr != nil {
+		exec.Command("git", "-C", projectPath, "merge", "--abort").Run()
+		// Only fail if it's a genuine merge conflict. If remote 'main' simply doesn't exist yet, that's fine!
+		if strings.Contains(string(pullOut), "couldn't find remote ref main") {
+			// Remote is empty or main doesn't exist, safe to proceed
+		} else {
+			return fmt.Errorf("failed to sync with remote due to complex merge conflicts.\nOutput: %s", string(pullOut))
+		}
+	}
+
+	updateProgress("Pushing final changes to GitHub via HTTPS...")
+	pushCmd := exec.Command("git", "push", pushUrl, "HEAD:main")
 	pushCmd.Dir = projectPath
 	out, err := pushCmd.CombinedOutput()
+	
 	if err != nil {
+		// Fallback to push current branch if main fails
 		branchCmd := exec.Command("git", "branch", "--show-current")
 		branchCmd.Dir = projectPath
-		b, bErr := branchCmd.Output()
-		if bErr == nil {
+		if b, bErr := branchCmd.Output(); bErr == nil {
 			branch := strings.TrimSpace(string(b))
-			pushCmd2 := exec.Command("git", "push", "--set-upstream", "origin", branch)
+			pushCmd2 := exec.Command("git", "push", pushUrl, "HEAD:"+branch)
 			pushCmd2.Dir = projectPath
 			out2, err2 := pushCmd2.CombinedOutput()
 			if err2 != nil {
-				return fmt.Errorf("failed to push to github: %w\nOutput1: %s\nOutput2: %s", err2, string(out), string(out2))
+				return fmt.Errorf("failed to push to github via HTTPS: %w\nOutput1: %s\nOutput2: %s", err2, string(out), string(out2))
 			}
 		} else {
-			return fmt.Errorf("failed to push to github: %w\nOutput: %s", err, string(out))
+			return fmt.Errorf("failed to push to github via HTTPS: %w\nOutput: %s", err, string(out))
 		}
 	}
+
+	// Setup tracking branch gracefully
+	exec.Command("git", "-C", projectPath, "branch", "--set-upstream-to=origin/main", "main").Run()
 
 	return nil
 }

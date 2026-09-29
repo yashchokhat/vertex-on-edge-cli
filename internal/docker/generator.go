@@ -12,7 +12,7 @@ func GenerateDockerfile(projectPath, framework string) error {
 
 	switch framework {
 	case "Next.js":
-		dockerfileContent = `FROM node:18-alpine AS base
+		dockerfileContent = `FROM node:20-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
@@ -55,19 +55,20 @@ RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
 COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
 
 USER nextjs
 
 EXPOSE 3000
 ENV PORT 3000
 
-CMD ["node", "server.js"]
+CMD ["npm", "start"]
 `
 	case "React", "Vue", "Angular", "Svelte":
 		// Standard SPA build using Nginx
-		dockerfileContent = `FROM node:18-alpine AS builder
+		dockerfileContent = `FROM node:20-alpine AS builder
 
 WORKDIR /app
 
@@ -105,7 +106,7 @@ EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
 `
 	case "Node.js", "Express.js", "NestJS":
-		dockerfileContent = `FROM node:18-alpine
+		dockerfileContent = `FROM node:20-alpine
 
 WORKDIR /app
 

@@ -1,6 +1,7 @@
 package terraform
 
 import (
+	"strings"
 	"bytes"
 	"fmt"
 	"os"
@@ -14,6 +15,8 @@ type Runner interface {
 	Apply() error
 	Destroy() error
 	Output(name string) (string, error)
+	StateList() ([]string, error)
+	Import(address string, id string) error
 }
 
 type LocalRunner struct {
@@ -87,4 +90,24 @@ func (r *LocalRunner) Destroy() error {
 
 func (r *LocalRunner) Output(name string) (string, error) {
 	return r.execute("output", "-raw", name)
+}
+
+func (r *LocalRunner) StateList() ([]string, error) {
+	out, err := r.execute("state", "list")
+	if err != nil {
+		// If state is empty, terraform returns no error but empty string
+		return nil, nil
+	}
+	var resources []string
+	for _, line := range strings.Split(out, "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			resources = append(resources, trimmed)
+		}
+	}
+	return resources, nil
+}
+
+func (r *LocalRunner) Import(address string, id string) error {
+	_, err := r.execute("import", "-input=false", address, id)
+	return err
 }

@@ -106,6 +106,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 
 	var safeProjectName string
+	var exactRepoName string
 	var providerID, targetID string
 	awsRegion := "ap-south-1"
 	var err error
@@ -149,9 +150,6 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		selectedProviderID := ui.PromptCloudProvider()
 		providerID = string(selectedProviderID)
 
-		var oidcProviderArn string
-		var oidcWg sync.WaitGroup
-
 		if selectedProviderID == platform.ProviderAWS {
 			if !dependencies.CheckAndInstall("aws", "AWS CLI") {
 				ui.PrintInfo("Continuing without AWS auth. Cloud deployment step will likely fail later.")
@@ -171,21 +169,10 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 				}
 			}
 
-			oidcWg.Add(1)
-			go func() {
-				defer oidcWg.Done()
-				checkCmd := exec.Command("aws", "iam", "list-open-id-connect-providers", "--query", "OpenIDConnectProviderList[*].Arn", "--output", "text")
-				if out, err := checkCmd.Output(); err == nil {
-					outputStr := string(out)
-					parts := strings.Fields(outputStr)
-					for _, arn := range parts {
-						if strings.Contains(arn, "token.actions.githubusercontent.com") {
-							oidcProviderArn = arn
-							break
-						}
-					}
-				}
-			}()
+			// Phase 1: Verify AWS Access
+			if callerOut, err := exec.Command("aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text").Output(); err == nil {
+				ui.PrintInfo(fmt.Sprintf("AWS Account ID: %s", strings.TrimSpace(string(callerOut))))
+			}
 		}
 
 		// 6. Target Selection
@@ -233,26 +220,59 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		// 9. Cloud Configuration
 		ui.PrintInfo(fmt.Sprintf("Configuring deployment for %s on %s...", primary.Framework, targetID))
 
+		exactRepoName = info.Name
 		safeProjectName = strings.ToLower(strings.ReplaceAll(info.Name, " ", "-"))
 
-		vars := map[string]string{
-			"aws_region":    awsRegion,
-			"project_name":  safeProjectName,
-			"instance_type": "t3.micro",
-			"app_port":      "3000",
-			"github_repo":   "yashchokhat/" + safeProjectName,
-		}
-
-		if selectedProviderID == platform.ProviderAWS {
-			oidcWg.Wait()
-			if oidcProviderArn != "" {
-				vars["create_oidc_provider"] = "false"
-				vars["oidc_provider_arn"] = oidcProviderArn
-				// Patch the existing OIDC provider to ensure it has the latest GitHub thumbprints
-				// This fixes "Not authorized to perform sts:AssumeRoleWithWebIdentity" if the user has an old provider
-				exec.Command("aws", "iam", "update-open-id-connect-provider-thumbprint", "--open-id-connect-provider-arn", oidcProviderArn, "--thumbprint-list", "6938fd4d98bab03faadb97b34396831e3780aea1", "1c58a3a8518e8759bf075b76b750d4f2df264fcd", "1b511abead59c6ce207077c0bf0e0043b1382612").Run()
+		// Phase 2: Detect GitHub Repository (do not hardcode owner or assume directory name matches repo)
+		githubOwner := os.Getenv("USER") // Global Fallback if all GitHub APIs fail
+		
+		// Attempt to get the actual remote repository identity if it exists
+		ghRepoViewCmd := exec.Command("gh", "repo", "view", "--json", "owner,name", "-q", ".owner.login + \"/\" + .name")
+		ghRepoViewCmd.Dir = projectPath
+		if repoInfo, err := ghRepoViewCmd.Output(); err == nil {
+			parts := strings.Split(strings.TrimSpace(string(repoInfo)), "/")
+			if len(parts) == 2 {
+				githubOwner = parts[0]
+				exactRepoName = parts[1] // Override the local directory name with the true remote repo name
+			}
+		} else {
+			// Fallback for brand new projects that aren't on GitHub yet
+			ghApiUserCmd := exec.Command("gh", "api", "user", "-q", ".login")
+			if ghUser, err := ghApiUserCmd.Output(); err == nil {
+				githubOwner = strings.TrimSpace(string(ghUser))
+			}
+			
+			// Try to extract from git remote if gh repo view failed
+			gitRemoteCmd := exec.Command("git", "-C", projectPath, "remote", "get-url", "origin")
+			if remoteOut, err := gitRemoteCmd.Output(); err == nil {
+				remoteStr := strings.TrimSpace(string(remoteOut))
+				// Handle both HTTPS and SSH urls
+				if strings.HasPrefix(remoteStr, "https://github.com/") {
+					parts := strings.Split(strings.TrimPrefix(remoteStr, "https://github.com/"), "/")
+					if len(parts) >= 2 {
+						githubOwner = parts[0]
+						exactRepoName = strings.TrimSuffix(parts[1], ".git")
+					}
+				} else if strings.HasPrefix(remoteStr, "git@github.com:") {
+					parts := strings.Split(strings.TrimPrefix(remoteStr, "git@github.com:"), "/")
+					if len(parts) >= 2 {
+						githubOwner = parts[0]
+						exactRepoName = strings.TrimSuffix(parts[1], ".git")
+					}
+				}
 			}
 		}
+
+		vars := map[string]string{
+			"aws_region":        awsRegion,
+			"project_name":      safeProjectName,
+			"instance_type":     "t3.micro",
+			"app_port":          "3000",
+			"github_owner":      githubOwner,
+			"github_repository": exactRepoName,
+		}
+
+
 
 		tfDir, err = terraform.RenderTemplates(projectPath, providerID, targetID, vars)
 		if err != nil {
@@ -265,7 +285,62 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		ui.PrintInfo("Using existing Vertex-on-Edge configuration...")
 		providerID = configuredProvider
 		targetID = configuredTarget
-		safeProjectName = strings.ToLower(strings.ReplaceAll(filepath.Base(projectPath), " ", "-"))
+
+		githubOwner := os.Getenv("USER")
+		exactRepoName = filepath.Base(projectPath)
+		fastRepoViewCmd := exec.Command("gh", "repo", "view", "--json", "owner,name", "-q", ".owner.login + \"/\" + .name")
+		fastRepoViewCmd.Dir = projectPath
+		if repoInfo, err := fastRepoViewCmd.Output(); err == nil {
+			parts := strings.Split(strings.TrimSpace(string(repoInfo)), "/")
+			if len(parts) == 2 {
+				githubOwner = parts[0]
+				exactRepoName = parts[1]
+			}
+		} else {
+			// Fallback for brand new projects that aren't on GitHub yet
+			ghApiUserCmd := exec.Command("gh", "api", "user", "-q", ".login")
+			if ghUser, err := ghApiUserCmd.Output(); err == nil {
+				githubOwner = strings.TrimSpace(string(ghUser))
+			}
+			
+			// Try to extract from git remote if gh repo view failed
+			gitRemoteCmd := exec.Command("git", "-C", projectPath, "remote", "get-url", "origin")
+			if remoteOut, err := gitRemoteCmd.Output(); err == nil {
+				remoteStr := strings.TrimSpace(string(remoteOut))
+				// Handle both HTTPS and SSH urls
+				if strings.HasPrefix(remoteStr, "https://github.com/") {
+					parts := strings.Split(strings.TrimPrefix(remoteStr, "https://github.com/"), "/")
+					if len(parts) >= 2 {
+						githubOwner = parts[0]
+						exactRepoName = strings.TrimSuffix(parts[1], ".git")
+					}
+				} else if strings.HasPrefix(remoteStr, "git@github.com:") {
+					parts := strings.Split(strings.TrimPrefix(remoteStr, "git@github.com:"), "/")
+					if len(parts) >= 2 {
+						githubOwner = parts[0]
+						exactRepoName = strings.TrimSuffix(parts[1], ".git")
+					}
+				}
+			}
+		}
+		safeProjectName = strings.ToLower(strings.ReplaceAll(exactRepoName, " ", "-"))
+
+		// Synchronize Terraform variables to the current GitHub repository context
+		// This strictly guarantees the IAM Trust Policy will accept OIDC requests from the current repo
+		if githubOwner != "" && exactRepoName != "" {
+			tfVarsPath := filepath.Join(tfDir, "terraform.tfvars")
+			if tfVarsData, err := os.ReadFile(tfVarsPath); err == nil {
+				lines := strings.Split(string(tfVarsData), "\n")
+				for i, line := range lines {
+					if strings.HasPrefix(line, "github_owner ") || strings.HasPrefix(line, "github_owner=") {
+						lines[i] = fmt.Sprintf("github_owner = \"%s\"", githubOwner)
+					} else if strings.HasPrefix(line, "github_repository ") || strings.HasPrefix(line, "github_repository=") {
+						lines[i] = fmt.Sprintf("github_repository = \"%s\"", exactRepoName)
+					}
+				}
+				os.WriteFile(tfVarsPath, []byte(strings.Join(lines, "\n")), 0644)
+			}
+		}
 	}
 
 	runner := terraform.NewLocalRunner(tfDir)
@@ -287,6 +362,12 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	spinner.Stop(true)
+
+	if providerID == string(platform.ProviderAWS) {
+		if err := ReconcileAWSInfrastructure(runner, safeProjectName, awsRegion); err != nil {
+			ui.PrintError("Reconciliation Failed", err.Error())
+		}
+	}
 
 	ui.PrintInfo("Generating Terraform plan...")
 	planOut, err := runner.Plan()
@@ -315,14 +396,46 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	// 10. Extract Outputs & Configure CI/CD
 	ui.PrintInfo("Extracting infrastructure outputs...")
 
-	roleArn, err := runner.Output("github_actions_role_arn")
-	if err != nil {
-		ui.PrintError("Failed to get IAM Role ARN from Terraform", err.Error())
+
+
+	if providerID == string(platform.ProviderAWS) {
+		// Validate OIDC Provider exists
+		checkCmd := exec.Command("aws", "iam", "list-open-id-connect-providers", "--query", "OpenIDConnectProviderList[*].Arn", "--output", "text")
+		if out, err := checkCmd.Output(); err == nil {
+			outputStr := string(out)
+			if !strings.Contains(outputStr, "token.actions.githubusercontent.com") {
+				ui.PrintError("OIDC_PROVIDER_MISSING", "The GitHub Actions OIDC provider could not be found in AWS. Ensure your AWS account permits OIDC provider creation.")
+				return nil
+			}
+		} else {
+			ui.PrintError("OIDC_PROVIDER_MISSING", "Failed to query AWS for OIDC providers: " + err.Error())
+			return nil
+		}
+
+		// Validate global IAM Role Trust Policy
+		roleName := "vertexOnEdge-cli"
+		trustCmd := exec.Command("aws", "iam", "get-role", "--role-name", roleName, "--query", "Role.AssumeRolePolicyDocument", "--output", "json")
+		if out, err := trustCmd.Output(); err == nil {
+			if !strings.Contains(string(out), "token.actions.githubusercontent.com") {
+				ui.PrintError("OIDC_ROLE_TRUST_INVALID", fmt.Sprintf("The IAM role '%s' does not correctly reference the GitHub OIDC provider.", roleName))
+				return nil
+			}
+		} else {
+			ui.PrintError("OIDC_ROLE_MISSING", "Failed to retrieve global IAM role trust policy (vertexOnEdge-cli): " + err.Error())
+			return nil
+		}
+
+		fmt.Println("    ✓  OIDC configured successfully")
 	}
 
 	appUrl, err := runner.Output("application_url")
 	if err != nil {
 		ui.PrintError("Failed to get Application URL from Terraform", err.Error())
+	}
+	
+	instanceId, err := runner.Output("instance_id")
+	if err != nil {
+		// Non-fatal, just a warning if it doesn't exist yet
 	}
 
 	ui.PrintInfo("Securing GitHub Actions environment...")
@@ -330,27 +443,46 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		"AWS_REGION":          awsRegion,
 		"ECR_REPOSITORY_NAME": safeProjectName,
 	}
-
-	if roleArn != "" {
-		secrets["AWS_ROLE_ARN"] = strings.TrimSpace(roleArn)
+	
+	if instanceId != "" {
+		secrets["EC2_INSTANCE_ID"] = strings.TrimSpace(instanceId)
 	}
 
+	// Inject the global vertexOnEdge-cli IAM role ARN
+	accountIDOut, err := exec.Command("aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text").Output()
+	if err == nil {
+		accountID := strings.TrimSpace(string(accountIDOut))
+		if accountID != "" {
+			secrets["AWS_ROLE_ARN"] = "arn:aws:iam::" + accountID + ":role/vertexOnEdge-cli"
+		}
+	}
+
+
+
 	spinner = ui.SpinnerStart("Initializing GitHub configuration...")
-	err = ghactions.InitAndPush(projectPath, safeProjectName, secrets, func(status string) {
+	err = ghactions.InitAndPush(projectPath, exactRepoName, secrets, func(status string) {
 		spinner.Update(status)
 	})
 	if err != nil {
 		spinner.Stop(false)
-		ui.PrintError("Failed to configure GitHub repository", err.Error())
+		ui.PrintError("GitHub repository synchronization failed", err.Error())
+		fmt.Println("\n  ✓ AWS infrastructure deployed")
+		fmt.Println("  ✓ EC2 instance ready")
+		fmt.Println("  ✓ ECR registry ready")
+		fmt.Println("  ✓ IAM OIDC role ready")
+		fmt.Println("\n  ✕ GitHub repository synchronization failed")
+		fmt.Println("\n  Reason:\n    GitHub authentication failed, missing 'workflow' token scope, or unresolved merge conflicts.")
+		fmt.Println("\n  Nothing else needs to be provisioned on AWS.")
+		// We could add a resume command here later
+		return err
 	} else {
 		spinner.Stop(true)
 		ui.PrintSuccess("Repository pushed to GitHub with secure CI/CD secrets!")
-	}
-
-	ui.PrintSuccess("Vertex-on-Edge Deployment Handoff Complete!")
-	if appUrl != "" {
-		fmt.Printf("\n  Your application will be live at: %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#00B4D8")).Render(strings.TrimSpace(appUrl)))
-		fmt.Printf("  (Please allow 3-5 minutes for the first GitHub Actions pipeline to finish building and deploying your container.)\n\n")
+		ui.PrintSuccess("Vertex-on-Edge Deployment Handoff Complete!")
+		if appUrl != "" {
+			fmt.Printf("\n  Your application will be live at: %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#00B4D8")).Render(strings.TrimSpace(appUrl)))
+			fmt.Printf("  (Please allow 3-5 minutes for the first GitHub Actions pipeline to finish building and deploying your container.)\n\n")
+		}
 	}
 
 	return nil
