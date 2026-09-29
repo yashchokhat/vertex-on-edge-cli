@@ -1,163 +1,36 @@
-# Vertex-on-Edge
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-Infrastructure without the DevOps overhead.
+## Getting Started
 
-Vertex-on-Edge is an open-source CLI designed to allow developers to deploy existing applications directly to their own cloud infrastructure. It removes the need to manually learn Docker, CI/CD pipelines, or cloud provisioning.
-
-Currently, the project is in its first milestone: providing an interactive, cross-platform CLI interface and an intelligent technology stack detection engine.
-
-## Operating System Support
-
-The CLI is fully cross-platform and natively supported on:
-- macOS (Intel and Apple Silicon)
-- Windows (10 and 11)
-- Linux (Ubuntu, Debian, Fedora, Arch, and other major distributions)
-
-It includes native integrations for file system navigation, utilizing Finder on macOS, File Explorer on Windows, and standard dialogs on Linux.
-
-## Supported Technology Stacks
-
-The detection engine uses heuristic analysis of your project's directory structure, configuration files, and package manifests to accurately identify your stack. 
-
-Currently supported frameworks and environments include:
-
-**Frontend and Fullstack Web**
-- Next.js
-- React
-- Vue
-- Angular
-- Svelte and SvelteKit
-- Nuxt
-- Remix
-- NestJS
-- Express.js
-- Generic Node.js
-
-**Backend and API**
-- Django, FastAPI, Flask, and Generic Python
-- Spring Boot and Generic Java
-- Go (Standard, Gin, Echo)
-- Laravel and Generic PHP
-- Ruby on Rails and Generic Ruby
-- Rust
-
-**Mobile and Hybrid**
-- Flutter
-- React Native
-- Capacitor
-- Android (Native Java and Kotlin)
-- iOS (Native Swift and Objective-C)
-
-**Containers**
-- Generic Docker Containers
-
-## Roadmap
-
-The long-term vision of Vertex-on-Edge is to completely automate the journey from local source code to public application:
-
-1. Detect Tech Stack (Completed)
-2. Generate Dockerfile
-3. Build Container
-4. Test and Security Scan
-5. Create GitHub Repository
-6. Configure GitHub Actions
-7. Push to Container Registry
-8. Provision AWS EC2
-9. Deploy Public Application
-
-## Installation
-
-### Prerequisites
-
-Ensure you have Go 1.24 or higher installed on your system.
-
-### Build from Source
-
-Clone the repository and run the build command. This will generate a standalone binary for your operating system.
+First, run the development server:
 
 ```bash
-git clone https://github.com/yashchokhat/vertex-on-edge.git
-cd vertex-on-edge
-make build
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
 ```
 
-The compiled binary will be located at `bin/vertex-on-edge`.
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-## Usage
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
-### Analyze a Project
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-To begin the interactive startup experience and detect a project's technology stack, run the CLI without any arguments:
+## Learn More
 
-```bash
-cd your-project
-vertex-on-edge
-```
+To learn more about Next.js, take a look at the following resources:
 
-The CLI will prompt you to accept the terms of service, ask you to select a target project directory (either the current directory, a manual path, or via a native file browser window), and then analyze the source code.
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
 
-### Direct Detection
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
-To run the technology detection immediately on the current directory without the interactive setup menus:
+## Deploy on Vercel
 
-```bash
-vertex-on-edge detect
-```
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
-## Setup Guide
-
-To start using Vertex-on-Edge locally across your projects, you can install the binary globally on your system.
-
-### Option 1: Install via Go (Recommended)
-
-If you have Go installed, you can compile and install it directly to your `GOPATH`:
-
-```bash
-go install github.com/yashchokhat/vertex-on-edge/cmd/vertex-on-edge@latest
-```
-
-Ensure `~/go/bin` is in your system's `PATH`.
-
-### Option 2: Build and Link Manually
-
-```bash
-git clone https://github.com/yashchokhat/vertex-on-edge.git
-cd vertex-on-edge
-make build
-
-# Move the binary to a global bin directory
-sudo mv bin/vertex-on-edge /usr/local/bin/
-```
-
-Once installed, simply run `vertex-on-edge` from any project directory.
-
-## Development
-
-The project uses a standard Makefile for common tasks.
-
-```bash
-make build    # Compiles the binary
-make run      # Compiles and immediately executes the CLI
-make test     # Runs the test suite
-make lint     # Formats the code and runs static analysis
-make clean    # Removes compiled binaries
-```
-
-### Architecture
-
-The codebase is structured to be extensible, making it easy to add subsequent modules as the project grows.
-
-- `cmd/vertex-on-edge/` - Contains the main entry point.
-- `internal/cli/` - Defines the Cobra commands and execution flow.
-- `internal/config/` - Houses configuration constants and supported stack definitions.
-- `internal/detector/` - Contains the heuristic scanning engine and language-specific rules.
-- `internal/ui/` - Provides terminal formatting, interactive prompts, and cross-platform native dialog wrappers.
-- `pkg/models/` - Exposes public data models used across the application.
-
-## Legal
-
-### License
-This project is licensed under the MIT License. See the `LICENSE` file for details.
-
-### Terms and Conditions
-By using Vertex-on-Edge, you agree that you are responsible for your own deployments and cloud provider costs. Read the full [Terms and Conditions](https://github.com/yashchokhat/vertex-on-edge/blob/main/TERMS.md).
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
