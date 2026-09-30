@@ -6,7 +6,7 @@ Vertex-on-Edge is a Go-based command-line interface that automates the transitio
 
 ## What It Does
 
-Vertex-on-Edge takes a developer's project directory and automates the entire deployment pipeline. It scans the directory to detect the technology stack, generates a production-ready Dockerfile, creates GitHub Actions CI/CD workflows, and provisions cloud infrastructure using Terraform. Finally, it pushes the project to GitHub with the necessary SSH secrets, resulting in an automated pipeline that builds your application and transfers it directly to your EC2 instance via SCP, completely skipping expensive container registries and strict AWS IAM boundaries.
+Vertex-on-Edge takes a developer's project directory and automates the entire deployment pipeline. It scans the directory to detect the technology stack, generates a production-ready Dockerfile, creates GitHub Actions CI/CD workflows, and provisions cloud infrastructure using Terraform. Finally, it pushes the project to GitHub with the necessary SSH secrets, resulting in an automated pipeline that builds your application, pushes it to GitHub's free Container Registry (GHCR), and securely deploys it to your EC2 instance over SSH, completely skipping expensive AWS container registries and strict IAM boundaries.
 
 ## System Architecture
 
@@ -62,13 +62,13 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     participant GH as GitHub Actions
+    participant GHCR as GitHub Packages (GHCR)
     participant EC2 as AWS EC2
     
-    GH->>GH: Build Docker Image (docker build)
-    GH->>GH: Save Image (docker save app.tar)
-    GH->>EC2: Transfer tarball via SCP (Port 22)
-    GH->>EC2: Execute SSH commands
-    EC2->>EC2: Load Image (docker load)
+    GH->>GH: Build Docker Image
+    GH->>GHCR: Push to ghcr.io
+    GH->>EC2: Connect via SSH
+    EC2->>GHCR: Authenticate & Pull Image
     EC2->>EC2: Run Container (docker run)
     EC2-->>GH: Deployment Successful
 ```
@@ -174,7 +174,7 @@ When you run the `deploy` command, the CLI performs the following steps:
 6. **File Generation**: Creates the appropriate `Dockerfile` and GitHub Actions workflows (`deploy.yml`, `test.yml`).
 7. **Provisioning**: Runs Terraform to provision the required cloud infrastructure (EC2, Security Groups) and auto-generates a secure SSH key pair.
 8. **Secrets Management**: Injects the necessary infrastructure details (EC2 Public IP, SSH Private Key) into the GitHub repository as secrets.
-9. **Code Push**: Initializes the Git repository (if needed) and pushes the code, which triggers the CI/CD pipeline. The pipeline builds the image on GitHub and securely transfers it directly to EC2 via SCP, entirely skipping AWS ECR and IAM constraints.
+9. **Code Push**: Initializes the Git repository (if needed) and pushes the code, which triggers the CI/CD pipeline. The pipeline builds the image on GitHub, pushes it to `ghcr.io`, and uses SSH to pull and run the container directly on EC2, entirely skipping AWS ECR and IAM constraints.
 
 ## Configuration
 
@@ -183,7 +183,7 @@ The CLI stores project-specific configuration and Terraform state in a `.vertex-
 ## Troubleshooting
 
 ### SSH Authentication Error
-If the GitHub Actions workflow fails during the SCP transfer or SSH command execution:
+If the GitHub Actions workflow fails during the SSH command execution:
 - Verify that your EC2 Security Group allows inbound traffic on Port 22 from GitHub Actions. By default, the CLI opens port 22 globally (`0.0.0.0/0`) for this purpose.
 - Check that the `EC2_SSH_KEY` secret in your repository matches the private key output from Terraform.
 - Ensure the `EC2_HOST` matches the current public IP of your instance.

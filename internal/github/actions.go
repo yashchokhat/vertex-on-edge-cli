@@ -140,41 +140,46 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build Docker Image
-        run: docker build -t app .
-
-      - name: Save Docker Image
-        run: docker save app > app.tar
-
-      - name: Transfer Image to EC2
-        uses: appleboy/scp-action@v0.1.7
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          host: ${{ secrets.EC2_HOST }}
-          username: ec2-user
-          key: ${{ secrets.EC2_SSH_KEY }}
-          source: "app.tar"
-          target: "/home/ec2-user/"
-          proxy_timeout: 10m
-          timeout: 10m
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Run Docker Image on EC2
+      - name: Build and Push Docker Image
+        run: |
+          # Docker requires repository names to be lowercase
+          IMAGE_NAME=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          docker build -t $IMAGE_NAME:latest .
+          docker push $IMAGE_NAME:latest
+
+      - name: Run on EC2
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ec2-user
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: GITHUB_TOKEN
           script: |
-            docker load -i /home/ec2-user/app.tar
+            IMAGE_NAME=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+            echo $GITHUB_TOKEN | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker pull $IMAGE_NAME:latest
             docker stop app || true
             docker rm app || true
-            docker run -d --name app -p 80:3000 -p 3000:3000 app
-            rm /home/ec2-user/app.tar
+            docker run -d --name app -p 80:3000 -p 3000:3000 $IMAGE_NAME:latest
 `
 	} else if provider == "gcp" && target == "cloud-run" {
 		workflowContent = `name: Deploy to GCP Cloud Run
