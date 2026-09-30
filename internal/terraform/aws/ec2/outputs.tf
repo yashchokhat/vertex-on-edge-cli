@@ -23,6 +23,11 @@ output "registry_url" {
   value       = aws_ecr_repository.app.repository_url
 }
 
+output "ecr_repository_name" {
+  description = "ECR Repository Name"
+  value       = aws_ecr_repository.app.name
+}
+
 output "github_actions_access_key" {
   description = "Access Key ID for GitHub Actions deployment"
   value       = aws_iam_access_key.github_actions_key.id

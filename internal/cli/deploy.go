@@ -388,11 +388,17 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		fmt.Printf("    ✓  Access Key ID: %s\n", strings.TrimSpace(accessKey))
 	}
 
+	ecrRepoName, ecrErr := runner.Output("ecr_repository_name")
+	if ecrErr != nil || ecrRepoName == "" {
+		// Fallback for older states
+		ecrRepoName = safeProjectName
+	}
+
 	// Build the set of GitHub Actions secrets.
 	ui.PrintInfo("Securing GitHub Actions environment...")
 	secrets := map[string]string{
 		"AWS_REGION":          awsRegion,
-		"ECR_REPOSITORY_NAME": safeProjectName,
+		"ECR_REPOSITORY_NAME": strings.TrimSpace(ecrRepoName),
 	}
 
 	if instanceId != "" {
