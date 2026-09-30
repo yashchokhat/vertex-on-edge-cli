@@ -48,4 +48,6 @@ release:
 	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-linux-amd64 $(CMD_DIR)
 	@echo "Building for Windows (x86_64)..."
 	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-windows-amd64.exe $(CMD_DIR)
+	@echo "Building for Android (ARM64)..."
+	GOOS=android GOARCH=arm64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-android-arm64 $(CMD_DIR)
 	@echo "All cross-platform binaries compiled in the dist/ folder!"
