@@ -381,6 +381,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			return nil
 		}
 
+		if !strings.Contains(sshKey, "-----BEGIN") {
+			ui.PrintError("INVALID_SSH_KEY", "The Terraform output does not contain a valid private key. If you are fast-deploying a project that was originally set up to use an 'existing key pair', you MUST delete the .vertex-on-edge directory and re-deploy so the CLI can auto-generate a valid key for GitHub Actions.")
+			return nil
+		}
+
 		fmt.Println("    ✓  SSH Key generated")
 		fmt.Printf("    ✓  Host IP: %s\n", strings.TrimSpace(instanceIp))
 	}

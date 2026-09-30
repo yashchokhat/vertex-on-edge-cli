@@ -171,37 +171,10 @@ func PromptAWSInfrastructure() AWSInfraChoices {
 	}
 
 	// --- Key Pair ---
-	var keyChoice string
-
-	// Try to list existing key pairs from the user's AWS account.
-	keyPairOptions := []huh.Option[string]{
-		huh.NewOption("Auto-generate a new key pair (Terraform-managed)", "auto"),
-	}
-
-	listKeysCmd := exec.Command("aws", "ec2", "describe-key-pairs", "--query", "KeyPairs[*].KeyName", "--output", "text")
-	if out, err := listKeysCmd.Output(); err == nil {
-		names := strings.Fields(strings.TrimSpace(string(out)))
-		for _, name := range names {
-			if name != "" {
-				keyPairOptions = append(keyPairOptions, huh.NewOption(fmt.Sprintf("Use existing: %s", name), name))
-			}
-		}
-	}
-
-	err = huh.NewSelect[string]().
-		Title("SSH Key Pair").
-		Description("This key pair will be assigned to the EC2 instance for SSH access.").
-		Options(keyPairOptions...).
-		Value(&keyChoice).
-		Run()
-
-	if err == huh.ErrUserAborted {
-		os.Exit(0)
-	}
-
-	if keyChoice != "auto" {
-		choices.ExistingKeyPairName = keyChoice
-	}
+	// We no longer prompt for existing key pairs because GitHub Actions REQUIRES 
+	// the raw private key to SSH into the instance for GHCR deployment.
+	// Auto-generating a Terraform-managed key pair is mandatory.
+	choices.ExistingKeyPairName = ""
 
 	return choices
 }
