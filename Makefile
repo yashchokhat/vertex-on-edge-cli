@@ -34,6 +34,18 @@ vet:
 	go vet ./...
 
 clean:
-	rm -rf $(BIN_DIR)
+	rm -rf $(BIN_DIR) dist
 	go clean
 	@echo "Cleaned."
+
+release:
+	@mkdir -p dist
+	@echo "Building for macOS (Apple Silicon)..."
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-macos-arm64 $(CMD_DIR)
+	@echo "Building for macOS (Intel)..."
+	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-macos-intel $(CMD_DIR)
+	@echo "Building for Linux (x86_64)..."
+	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-linux-amd64 $(CMD_DIR)
+	@echo "Building for Windows (x86_64)..."
+	GOOS=windows GOARCH=amd64 go build $(LDFLAGS) -o dist/$(BINARY_NAME)-windows-amd64.exe $(CMD_DIR)
+	@echo "All cross-platform binaries compiled in the dist/ folder!"

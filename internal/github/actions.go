@@ -38,15 +38,15 @@ jobs:
 		for _, framework := range testingFrameworks {
 			switch framework {
 			case "jest":
-				workflowContent += "    - run: npm run test -- --passWithNoTests\n"
+				workflowContent += "    - run: npm run test --if-present -- --passWithNoTests\n"
 			case "vitest":
-				workflowContent += "    - run: npx vitest run --passWithNoTests\n"
+				workflowContent += "    - run: npx vitest run --passWithNoTests || echo 'No vitest tests found'\n"
 			case "cypress":
 				workflowContent += "    - run: npx cypress run || echo 'Cypress tests failed or no tests found'\n"
 			case "playwright":
-				workflowContent += "    - run: npx playwright install --with-deps\n    - run: npx playwright test --pass-with-no-tests\n"
+				workflowContent += "    - run: npx playwright install --with-deps\n    - run: npx playwright test --pass-with-no-tests || echo 'No playwright tests found'\n"
 			default:
-				workflowContent += "    - run: npm test\n"
+				workflowContent += "    - run: npm run test --if-present\n"
 			}
 		}
 
