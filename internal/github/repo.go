@@ -13,20 +13,20 @@ func InitAndPush(projectPath, projectName string, secrets map[string]string, upd
 	if err := EnsureGitRepo(projectPath, updateProgress); err != nil {
 		return err
 	}
-	
+
 	pushUrl, err := EnsureGitHubRepo(projectPath, projectName, updateProgress)
 	if err != nil {
 		return err
 	}
-	
+
 	if err := ConfigureSecrets(projectPath, secrets, updateProgress); err != nil {
 		return err
 	}
-	
+
 	if err := SyncAndPush(projectPath, pushUrl, updateProgress); err != nil {
 		return err
 	}
-	
+
 	return nil
 }
 
@@ -82,7 +82,7 @@ func EnsureGitHubRepo(projectPath, projectName string, updateProgress func(strin
 	updateProgress(fmt.Sprintf("Verifying repository '%s' on GitHub...", projectName))
 	var originalRemote string
 	urlOut, err := exec.Command("gh", "repo", "view", projectName, "--json", "url", "-q", ".url").Output()
-	
+
 	if err == nil {
 		originalRemote = strings.TrimSpace(string(urlOut))
 	} else {
@@ -93,7 +93,7 @@ func EnsureGitHubRepo(projectPath, projectName string, updateProgress func(strin
 		if out, err := createCmd.CombinedOutput(); err != nil {
 			return "", fmt.Errorf("failed to create github repo: %w\nOutput: %s", err, string(out))
 		}
-		
+
 		// Retrieve the URL of the newly created repo
 		urlOut2, err2 := exec.Command("gh", "repo", "view", projectName, "--json", "url", "-q", ".url").Output()
 		if err2 != nil {
@@ -158,7 +158,7 @@ func ConfigureSecrets(projectPath string, secrets map[string]string, updateProgr
 // SyncAndPush proactively merges remote changes and pushes the local repository
 func SyncAndPush(projectPath, pushUrl string, updateProgress func(string)) error {
 	updateProgress("Checking for remote changes (auto-merge)...")
-	
+
 	// Proactively pull remote changes before attempting push
 	// -X ours favors local modifications (like .gitignore) during unrelated history collisions
 	pullCmd := exec.Command("git", "pull", "--no-rebase", "-X", "ours", pushUrl, "main", "--allow-unrelated-histories")
@@ -177,7 +177,7 @@ func SyncAndPush(projectPath, pushUrl string, updateProgress func(string)) error
 	pushCmd := exec.Command("git", "push", pushUrl, "HEAD:main")
 	pushCmd.Dir = projectPath
 	out, err := pushCmd.CombinedOutput()
-	
+
 	if err != nil {
 		// Fallback to push current branch if main fails
 		branchCmd := exec.Command("git", "branch", "--show-current")

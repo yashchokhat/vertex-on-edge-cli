@@ -373,21 +373,19 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 	instanceId, _ := runner.Output("instance_id")
 
-	// Read the Role ARN directly from Terraform outputs.
-	// This is the per-project OIDC role that Terraform just created,
-	// not a manually-constructed ARN.
-	roleArn, roleErr := runner.Output("github_actions_role_arn")
+	// Read the IAM Access Keys directly from Terraform outputs.
+	accessKey, accessKeyErr := runner.Output("github_actions_access_key")
+	secretKey, secretKeyErr := runner.Output("github_actions_secret_key")
 
 	if providerID == string(platform.ProviderAWS) {
-		if roleErr != nil || roleArn == "" {
-			ui.PrintError("OIDC_ROLE_MISSING", "Failed to read the GitHub Actions IAM role ARN from Terraform outputs.")
-			ui.PrintInfo("Check that the Terraform apply completed successfully and that outputs.tf includes github_actions_role_arn.")
+		if accessKeyErr != nil || secretKeyErr != nil || accessKey == "" || secretKey == "" {
+			ui.PrintError("IAM_CREDENTIALS_MISSING", "Failed to read the GitHub Actions IAM credentials from Terraform outputs.")
+			ui.PrintInfo("Check that the Terraform apply completed successfully and that outputs.tf includes github_actions_access_key.")
 			return nil
 		}
 
-		fmt.Println("    ✓  OIDC provider configured")
-		fmt.Println("    ✓  GitHub Actions IAM role created")
-		fmt.Printf("    ✓  Role ARN: %s\n", strings.TrimSpace(roleArn))
+		fmt.Println("    ✓  GitHub Actions IAM user created")
+		fmt.Printf("    ✓  Access Key ID: %s\n", strings.TrimSpace(accessKey))
 	}
 
 	// Build the set of GitHub Actions secrets.
@@ -401,8 +399,9 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		secrets["EC2_INSTANCE_ID"] = strings.TrimSpace(instanceId)
 	}
 
-	if roleArn != "" {
-		secrets["AWS_ROLE_ARN"] = strings.TrimSpace(roleArn)
+	if accessKey != "" && secretKey != "" {
+		secrets["AWS_ACCESS_KEY_ID"] = strings.TrimSpace(accessKey)
+		secrets["AWS_SECRET_ACCESS_KEY"] = strings.TrimSpace(secretKey)
 	}
 
 	// -----------------------------------------------------------------------

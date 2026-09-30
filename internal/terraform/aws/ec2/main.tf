@@ -265,62 +265,15 @@ resource "aws_instance" "app_server" {
 }
 
 # ---------------------------------------------------------------------------
-# GitHub Actions OIDC Provider (global singleton per AWS account)
-# ---------------------------------------------------------------------------
-
-resource "aws_iam_openid_connect_provider" "github" {
-  count           = var.create_oidc_provider ? 1 : 0
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = [
-    "6938fd4d98bab03faadb97b34396831e3780aea1",
-    "1c58a3a8518e8759bf075b76b750d4f2df264fcd",
-    "1b511abead59c6ce207077c0bf0e0043b1382612",
-    "06d927fecd0a84aeba28aad1d808139470fe95c3",
-    "ffffffffffffffffffffffffffffffffffffffff",
-  ]
-}
-
-# ---------------------------------------------------------------------------
-# GitHub Actions IAM Role (this is the role GitHub Actions assumes via OIDC)
+# GitHub Actions IAM User (for deploying from CI/CD)
 #
-# This is the fix for:
-#   "Error: Could not assume role with OIDC: Not authorized to perform
-#    sts:AssumeRoleWithWebIdentity"
-#
-# The trust policy below explicitly allows the OIDC provider to issue
-# temporary credentials, scoped to only this repository and branch.
+# Bypasses OIDC completely to avoid strict Service Control Policies (SCPs)
+# that block AssumeRoleWithWebIdentity in AWS Sandbox / Managed accounts.
 # ---------------------------------------------------------------------------
 
-data "aws_caller_identity" "current" {}
-
-locals {
-  oidc_provider_arn = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : var.oidc_provider_arn
-}
-
-resource "aws_iam_role" "github_actions_role" {
+resource "aws_iam_user" "github_actions_user" {
   name = "${var.project_name}-gh-actions-${random_id.suffix.hex}"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Principal = {
-          Federated = local.oidc_provider_arn
-        }
-        Action = "sts:AssumeRoleWithWebIdentity"
-        Condition = {
-          StringEquals = {
-            "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
-          }
-          StringLike = {
-            "token.actions.githubusercontent.com:sub" = "repo:${var.github_owner}/${var.github_repository}:*"
-          }
-        }
-      }
-    ]
-  })
+  path = "/system/"
 
   tags = {
     ManagedBy = "Vertex-on-Edge"
@@ -328,12 +281,15 @@ resource "aws_iam_role" "github_actions_role" {
   }
 }
 
-# The GitHub Actions role needs permission to push images to ECR,
-# send SSM commands to EC2, and read EC2 metadata.
+resource "aws_iam_access_key" "github_actions_key" {
+  user = aws_iam_user.github_actions_user.name
+}
 
-resource "aws_iam_role_policy" "github_actions_ecr_push" {
-  name = "${var.project_name}-ecr-push"
-  role = aws_iam_role.github_actions_role.id
+data "aws_caller_identity" "current" {}
+
+resource "aws_iam_user_policy" "github_actions_deploy_policy" {
+  name = "${var.project_name}-deploy-policy"
+  user = aws_iam_user.github_actions_user.name
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -358,17 +314,6 @@ resource "aws_iam_role_policy" "github_actions_ecr_push" {
         ]
         Resource = aws_ecr_repository.app.arn
       },
-    ]
-  })
-}
-
-resource "aws_iam_role_policy" "github_actions_ssm" {
-  name = "${var.project_name}-ssm-deploy"
-  role = aws_iam_role.github_actions_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
       {
         Effect = "Allow"
         Action = [

@@ -1,11 +1,11 @@
 package terraform
 
 import (
-	"strings"
 	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 type Runner interface {

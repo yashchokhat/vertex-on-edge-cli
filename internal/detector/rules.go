@@ -579,19 +579,19 @@ func androidNativeRule() Rule {
 			if fs.FileExists("pubspec.yaml") || fs.FileExists("package.json") {
 				return nil // Likely Flutter, React Native, or Capacitor
 			}
-			
+
 			hasGradle := fs.FileExists("build.gradle") || fs.FileExists("build.gradle.kts") || fs.FileExists("settings.gradle")
 			hasManifest := fs.FileExists("app/src/main/AndroidManifest.xml")
-			
+
 			if !hasGradle || !hasManifest {
 				return nil
 			}
-			
+
 			lang := "Java"
 			if fs.FileExists("build.gradle.kts") {
 				lang = "Kotlin"
 			}
-			
+
 			return &models.DetectedStack{
 				Language:       lang,
 				Framework:      "Android (Native)",
@@ -611,7 +611,7 @@ func iosNativeRule() Rule {
 			if fs.FileExists("pubspec.yaml") || fs.FileExists("package.json") {
 				return nil // Likely Flutter, React Native, or Capacitor
 			}
-			
+
 			// Check for .xcodeproj or .xcworkspace directories
 			subdirs := fs.ListSubdirectories()
 			hasXcode := false
@@ -621,18 +621,18 @@ func iosNativeRule() Rule {
 					break
 				}
 			}
-			
+
 			if !hasXcode {
 				return nil
 			}
-			
+
 			pm := ""
 			if fs.FileExists("Podfile") {
 				pm = "CocoaPods"
 			} else if fs.FileExists("Package.swift") {
 				pm = "SwiftPM"
 			}
-			
+
 			return &models.DetectedStack{
 				Language:       "Swift/Objective-C",
 				Framework:      "iOS (Native)",
@@ -652,7 +652,7 @@ func capacitorRule() Rule {
 			if !fs.FileExists("capacitor.config.ts") && !fs.FileExists("capacitor.config.json") && !fs.FileExists("capacitor.config.js") {
 				return nil
 			}
-			
+
 			lang := "TypeScript"
 			if fs.FileExists("capacitor.config.js") || fs.FileExists("capacitor.config.json") {
 				lang = "JavaScript"
@@ -660,7 +660,7 @@ func capacitorRule() Rule {
 			if fs.FileExists("tsconfig.json") {
 				lang = "TypeScript"
 			}
-			
+
 			return &models.DetectedStack{
 				Language:       lang,
 				Framework:      "Capacitor",

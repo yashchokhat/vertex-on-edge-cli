@@ -68,7 +68,7 @@ func PromptTermsAcceptance() bool {
 		lipgloss.NewStyle().Bold(true).Foreground(accentColor).Render("Do you accept the terms and conditions?"),
 		dimStyle.Render("[Y/n]"),
 	)
-	
+
 	padLen := (TerminalWidth() - lipgloss.Width(promptText)) / 2
 	if padLen < 0 {
 		padLen = 0

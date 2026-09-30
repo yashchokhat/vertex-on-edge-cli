@@ -77,7 +77,7 @@ func installMac(cmdName string) error {
 func installWindows(cmdName string) error {
 	// Try winget first, then choco
 	var installer, installCmd string
-	
+
 	if _, err := exec.LookPath("winget"); err == nil {
 		installer = "winget"
 		installCmd = "install"

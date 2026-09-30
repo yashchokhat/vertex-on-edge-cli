@@ -9,9 +9,9 @@ import (
 // PromptTestingFramework asks the user which testing frameworks they want to configure
 func PromptTestingFramework(language, framework string) []string {
 	var selected []string
-	
+
 	var options []huh.Option[string]
-	
+
 	switch language {
 	case "TypeScript", "JavaScript":
 		options = append(options, huh.NewOption("Jest", "jest"))

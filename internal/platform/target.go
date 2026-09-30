@@ -3,16 +3,16 @@ package platform
 type TargetID string
 
 const (
-	TargetEC2            TargetID = "ec2"
-	TargetECS            TargetID = "ecs"
-	TargetEKS            TargetID = "eks"
-	TargetAppRunner      TargetID = "app-runner"
-	TargetCloudRun       TargetID = "cloud-run"
-	TargetComputeEngine  TargetID = "compute-engine"
-	TargetGKE            TargetID = "gke"
-	TargetContainerApps  TargetID = "container-apps"
-	TargetAppService     TargetID = "app-service"
-	TargetAKS            TargetID = "aks"
+	TargetEC2           TargetID = "ec2"
+	TargetECS           TargetID = "ecs"
+	TargetEKS           TargetID = "eks"
+	TargetAppRunner     TargetID = "app-runner"
+	TargetCloudRun      TargetID = "cloud-run"
+	TargetComputeEngine TargetID = "compute-engine"
+	TargetGKE           TargetID = "gke"
+	TargetContainerApps TargetID = "container-apps"
+	TargetAppService    TargetID = "app-service"
+	TargetAKS           TargetID = "aks"
 )
 
 type Target struct {

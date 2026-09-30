@@ -23,9 +23,15 @@ output "registry_url" {
   value       = aws_ecr_repository.app.repository_url
 }
 
-output "github_actions_role_arn" {
-  description = "ARN of the IAM role for GitHub Actions OIDC authentication"
-  value       = aws_iam_role.github_actions_role.arn
+output "github_actions_access_key" {
+  description = "Access Key ID for GitHub Actions deployment"
+  value       = aws_iam_access_key.github_actions_key.id
+}
+
+output "github_actions_secret_key" {
+  description = "Secret Access Key for GitHub Actions deployment"
+  value       = aws_iam_access_key.github_actions_key.secret
+  sensitive   = true
 }
 
 output "ssh_private_key" {

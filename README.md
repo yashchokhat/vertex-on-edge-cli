@@ -76,7 +76,7 @@ sequenceDiagram
     participant ECR as AWS ECR / SSM
     
     GH->>AWS: Request temporary credentials (OIDC token)
-    AWS->>IAM: Validate trust policy (repo:owner/repo-name:*)
+    AWS->>IAM: Validate trust policy (repo:owner/repo-name:ref:refs/heads/main)
     IAM-->>AWS: Validation successful
     AWS-->>GH: Return short-lived STS credentials
     GH->>ECR: Push Docker image / Send SSM command
@@ -194,7 +194,7 @@ The CLI stores project-specific configuration and Terraform state in a `.vertex-
 
 ### OIDC Authentication Error
 If the GitHub Actions workflow fails with an authentication error related to STS or OIDC:
-- Verify that the IAM role trust policy exactly matches the repository name and owner. The trust policy must allow `repo:owner/repo-name:*`.
+- Verify that the IAM role trust policy exactly matches the repository name and owner. The trust policy must allow `repo:owner/repo-name:ref:refs/heads/main`.
 - Ensure the GitHub OIDC provider is correctly configured as an identity provider in your AWS account. It operates as a global singleton per AWS account.
 - Check that the AWS region in the workflow secrets matches the region where the IAM role was created.
 

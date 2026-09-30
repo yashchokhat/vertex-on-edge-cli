@@ -11,9 +11,9 @@ import (
 // Expected GitHub ED25519 public key and its fingerprint
 // https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/githubs-ssh-key-fingerprints
 const (
-	GitHubHost           = "github.com"
-	GitHubED25519PubKey  = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
-	ExpectedFingerprint  = "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"
+	GitHubHost          = "github.com"
+	GitHubED25519PubKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+	ExpectedFingerprint = "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU"
 )
 
 // EnsureSSHHostVerified checks ~/.ssh/known_hosts for GitHub.
@@ -31,7 +31,7 @@ func EnsureSSHHostVerified() error {
 	}
 
 	knownHostsPath := filepath.Join(sshDir, "known_hosts")
-	
+
 	// Create file if it doesn't exist
 	if _, err := os.Stat(knownHostsPath); os.IsNotExist(err) {
 		if err := os.WriteFile(knownHostsPath, []byte(""), 0600); err != nil {
@@ -59,7 +59,7 @@ func EnsureSSHHostVerified() error {
 	// 3, 4, 5. Key does not exist. Add the verified ED25519 key directly.
 	// The key is hardcoded from GitHub's official documentation, satisfying the trusted mechanism requirement.
 	entry := fmt.Sprintf("%s %s\n", GitHubHost, GitHubED25519PubKey)
-	
+
 	f, err := os.OpenFile(knownHostsPath, os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to open known_hosts for appending: %w", err)

@@ -29,7 +29,7 @@ func (a *GitHubAuthenticator) IsAuthenticated() bool {
 		} else {
 			parts = strings.Split(outStr, "Logged in to github.com account ")
 		}
-		
+
 		if len(parts) > 1 {
 			userPart := strings.Split(parts[1], " ")[0]
 			a.Username = strings.TrimSpace(userPart)

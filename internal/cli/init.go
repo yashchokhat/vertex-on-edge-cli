@@ -22,9 +22,9 @@ func init() {
 
 func runInit(cmd *cobra.Command, args []string) error {
 	ui.PrintBanner()
-	
+
 	projectPath := ui.PromptProjectPath()
-	
+
 	d := detector.New()
 	spinner := ui.SpinnerStart("Detecting project stack...")
 	info, err := d.Detect(projectPath)
