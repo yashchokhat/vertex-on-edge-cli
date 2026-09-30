@@ -6,7 +6,7 @@ Vertex-on-Edge is a Go-based command-line interface that automates the transitio
 
 ## What It Does
 
-Vertex-on-Edge takes a developer's project directory and automates the entire deployment pipeline. It scans the directory to detect the technology stack, generates a production-ready Dockerfile, creates GitHub Actions CI/CD workflows, provisions cloud infrastructure using Terraform, and configures secure GitHub OIDC authentication for AWS. Finally, it pushes the project to GitHub with the necessary secrets, resulting in an automatic build, push, and deploy pipeline triggered by pushes to the main branch.
+Vertex-on-Edge takes a developer's project directory and automates the entire deployment pipeline. It scans the directory to detect the technology stack, generates a production-ready Dockerfile, creates GitHub Actions CI/CD workflows, and provisions cloud infrastructure using Terraform. Finally, it pushes the project to GitHub with the necessary SSH secrets, resulting in an automated pipeline that builds your application and transfers it directly to your EC2 instance via SCP, completely skipping expensive container registries and strict AWS IAM boundaries.
 
 ## System Architecture
 
@@ -29,8 +29,8 @@ flowchart TD
     PostTF --> |Git Push| Repo[Source Code Push]
     
     Repo --> CI[GitHub Actions Pipeline]
-    CI --> |Build & Push| ECR[AWS ECR]
-    CI --> |Deploy| EC2[AWS EC2]
+    CI --> |Build Image| Docker[GitHub Runners]
+    Docker --> |SCP Transfer| EC2[AWS EC2]
 ```
 
 ## AWS Infrastructure Architecture
@@ -45,42 +45,32 @@ flowchart TD
             end
         end
         
-        ECR[Elastic Container Registry]
-        
-        subgraph IAM
-            OIDC[GitHub OIDC Provider]
-            GHRole[GitHub Actions Role]
-            EC2Role[EC2 IAM Role]
-            InstanceProfile[IAM Instance Profile]
+        subgraph Security
+            SG[Security Group\nPorts: 22, 80, 443, App]
+            SSH[Auto-generated SSH Key]
         end
-        
-        SG[Security Group\nPorts: 22, 80, 443, App]
     end
     
     Internet((Internet)) --> IGW
     IGW --> EC2
-    EC2 --> |Pulls Images| ECR
-    EC2Role --> EC2
-    InstanceProfile --> EC2
     SG --> EC2
-    OIDC --> GHRole
+    SSH --> EC2
 ```
 
-## The OIDC Authentication Flow
+## Registry-less Deployment Flow
 
 ```mermaid
 sequenceDiagram
     participant GH as GitHub Actions
-    participant AWS as AWS STS
-    participant IAM as AWS IAM
-    participant ECR as AWS ECR / SSM
+    participant EC2 as AWS EC2
     
-    GH->>AWS: Request temporary credentials (OIDC token)
-    AWS->>IAM: Validate trust policy (repo:owner/repo-name:ref:refs/heads/main)
-    IAM-->>AWS: Validation successful
-    AWS-->>GH: Return short-lived STS credentials
-    GH->>ECR: Push Docker image / Send SSM command
-    ECR-->>GH: Success
+    GH->>GH: Build Docker Image (docker build)
+    GH->>GH: Save Image (docker save app.tar)
+    GH->>EC2: Transfer tarball via SCP (Port 22)
+    GH->>EC2: Execute SSH commands
+    EC2->>EC2: Load Image (docker load)
+    EC2->>EC2: Run Container (docker run)
+    EC2-->>GH: Deployment Successful
 ```
 
 ## Project Structure
@@ -182,9 +172,9 @@ When you run the `deploy` command, the CLI performs the following steps:
 4. **Stack Detection**: Analyzes the project files to determine the technology stack.
 5. **Infrastructure Prompts**: Collects preferences for cloud provider, region, networking, and deployment targets.
 6. **File Generation**: Creates the appropriate `Dockerfile` and GitHub Actions workflows (`deploy.yml`, `test.yml`).
-7. **Provisioning**: Runs Terraform to provision the required cloud infrastructure and configures the OIDC provider.
-8. **Secrets Management**: Injects the necessary AWS and infrastructure details into the GitHub repository as secrets.
-9. **Code Push**: Initializes the Git repository (if needed) and pushes the code, which triggers the CI/CD pipeline.
+7. **Provisioning**: Runs Terraform to provision the required cloud infrastructure (EC2, Security Groups) and auto-generates a secure SSH key pair.
+8. **Secrets Management**: Injects the necessary infrastructure details (EC2 Public IP, SSH Private Key) into the GitHub repository as secrets.
+9. **Code Push**: Initializes the Git repository (if needed) and pushes the code, which triggers the CI/CD pipeline. The pipeline builds the image on GitHub and securely transfers it directly to EC2 via SCP, entirely skipping AWS ECR and IAM constraints.
 
 ## Configuration
 
@@ -192,11 +182,11 @@ The CLI stores project-specific configuration and Terraform state in a `.vertex-
 
 ## Troubleshooting
 
-### OIDC Authentication Error
-If the GitHub Actions workflow fails with an authentication error related to STS or OIDC:
-- Verify that the IAM role trust policy exactly matches the repository name and owner. The trust policy must allow `repo:owner/repo-name:ref:refs/heads/main`.
-- Ensure the GitHub OIDC provider is correctly configured as an identity provider in your AWS account. It operates as a global singleton per AWS account.
-- Check that the AWS region in the workflow secrets matches the region where the IAM role was created.
+### SSH Authentication Error
+If the GitHub Actions workflow fails during the SCP transfer or SSH command execution:
+- Verify that your EC2 Security Group allows inbound traffic on Port 22 from GitHub Actions. By default, the CLI opens port 22 globally (`0.0.0.0/0`) for this purpose.
+- Check that the `EC2_SSH_KEY` secret in your repository matches the private key output from Terraform.
+- Ensure the `EC2_HOST` matches the current public IP of your instance.
 
 ### Missing Dependencies
 If the auto-installer fails to install required tools, manually install Git, Docker, Terraform, AWS CLI, or GitHub CLI using your system's package manager.
