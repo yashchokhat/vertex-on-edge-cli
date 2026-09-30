@@ -145,65 +145,6 @@ resource "aws_security_group" "app_sg" {
 }
 
 # ---------------------------------------------------------------------------
-# ECR Repository
-# ---------------------------------------------------------------------------
-
-resource "aws_ecr_repository" "app" {
-  name                 = "${var.project_name}-${random_id.suffix.hex}"
-  image_tag_mutability = "MUTABLE"
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-
-  tags = {
-    ManagedBy   = "Vertex-on-Edge"
-    Project     = var.project_name
-    Environment = "production"
-  }
-}
-
-# ---------------------------------------------------------------------------
-# EC2 IAM Role (allows the instance to pull from ECR and receive SSM commands)
-# ---------------------------------------------------------------------------
-
-resource "aws_iam_role" "ec2_role" {
-  name = "${var.project_name}-ec2-role-${random_id.suffix.hex}"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "ec2.amazonaws.com"
-        }
-      }
-    ]
-  })
-
-  tags = {
-    ManagedBy = "Vertex-on-Edge"
-  }
-}
-
-resource "aws_iam_role_policy_attachment" "ecr_read" {
-  role       = aws_iam_role.ec2_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-}
-
-resource "aws_iam_role_policy_attachment" "ssm_managed" {
-  role       = aws_iam_role.ec2_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-resource "aws_iam_instance_profile" "ec2_profile" {
-  name = "${var.project_name}-profile-${random_id.suffix.hex}"
-  role = aws_iam_role.ec2_role.name
-}
-
-# ---------------------------------------------------------------------------
 # SSH Key Pair
 # ---------------------------------------------------------------------------
 
@@ -245,16 +186,13 @@ resource "aws_instance" "app_server" {
   key_name      = local.key_pair_name
 
   vpc_security_group_ids = [aws_security_group.app_sg.id]
-  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
 
   user_data = <<-EOF
               #!/bin/bash
               yum update -y
-              yum install -y docker amazon-ssm-agent
+              yum install -y docker
               systemctl start docker
               systemctl enable docker
-              systemctl start amazon-ssm-agent
-              systemctl enable amazon-ssm-agent
               usermod -aG docker ec2-user
               EOF
 
@@ -262,69 +200,4 @@ resource "aws_instance" "app_server" {
     Name      = "${var.project_name}-server"
     ManagedBy = "Vertex-on-Edge"
   }
-}
-
-# ---------------------------------------------------------------------------
-# GitHub Actions IAM User (for deploying from CI/CD)
-#
-# Bypasses OIDC completely to avoid strict Service Control Policies (SCPs)
-# that block AssumeRoleWithWebIdentity in AWS Sandbox / Managed accounts.
-# ---------------------------------------------------------------------------
-
-resource "aws_iam_user" "github_actions_user" {
-  name = "${var.project_name}-gh-actions-${random_id.suffix.hex}"
-  path = "/system/"
-
-  tags = {
-    ManagedBy = "Vertex-on-Edge"
-    Project   = var.project_name
-  }
-}
-
-resource "aws_iam_access_key" "github_actions_key" {
-  user = aws_iam_user.github_actions_user.name
-}
-
-data "aws_caller_identity" "current" {}
-
-resource "aws_iam_user_policy" "github_actions_deploy_policy" {
-  name = "${var.project_name}-deploy-policy"
-  user = aws_iam_user.github_actions_user.name
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "ecr:GetAuthorizationToken",
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchGetImage",
-          "ecr:PutImage",
-          "ecr:InitiateLayerUpload",
-          "ecr:UploadLayerPart",
-          "ecr:CompleteLayerUpload",
-        ]
-        Resource = aws_ecr_repository.app.arn
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ssm:SendCommand",
-          "ssm:GetCommandInvocation",
-        ]
-        Resource = [
-          "arn:aws:ec2:${var.aws_region}:${data.aws_caller_identity.current.account_id}:instance/${aws_instance.app_server.id}",
-          "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript",
-        ]
-      }
-    ]
-  })
 }

@@ -371,43 +371,25 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		ui.PrintError("Failed to get Application URL from Terraform", err.Error())
 	}
 
-	instanceId, _ := runner.Output("instance_id")
-
-	// Read the IAM Access Keys directly from Terraform outputs.
-	accessKey, accessKeyErr := runner.Output("github_actions_access_key")
-	secretKey, secretKeyErr := runner.Output("github_actions_secret_key")
+	instanceIp, ipErr := runner.Output("instance_public_ip")
+	sshKey, sshErr := runner.Output("ssh_private_key")
 
 	if providerID == string(platform.ProviderAWS) {
-		if accessKeyErr != nil || secretKeyErr != nil || accessKey == "" || secretKey == "" {
-			ui.PrintError("IAM_CREDENTIALS_MISSING", "Failed to read the GitHub Actions IAM credentials from Terraform outputs.")
-			ui.PrintInfo("Check that the Terraform apply completed successfully and that outputs.tf includes github_actions_access_key.")
+		if ipErr != nil || sshErr != nil || instanceIp == "" || sshKey == "" {
+			ui.PrintError("SSH_CREDENTIALS_MISSING", "Failed to read the EC2 IP or SSH key from Terraform outputs.")
+			ui.PrintInfo("Check that the Terraform apply completed successfully and that outputs.tf includes ssh_private_key and instance_public_ip.")
 			return nil
 		}
 
-		fmt.Println("    ✓  GitHub Actions IAM user created")
-		fmt.Printf("    ✓  Access Key ID: %s\n", strings.TrimSpace(accessKey))
-	}
-
-	ecrRepoName, ecrErr := runner.Output("ecr_repository_name")
-	if ecrErr != nil || ecrRepoName == "" {
-		// Fallback for older states
-		ecrRepoName = safeProjectName
+		fmt.Println("    ✓  SSH Key generated")
+		fmt.Printf("    ✓  Host IP: %s\n", strings.TrimSpace(instanceIp))
 	}
 
 	// Build the set of GitHub Actions secrets.
 	ui.PrintInfo("Securing GitHub Actions environment...")
 	secrets := map[string]string{
-		"AWS_REGION":          awsRegion,
-		"ECR_REPOSITORY_NAME": strings.TrimSpace(ecrRepoName),
-	}
-
-	if instanceId != "" {
-		secrets["EC2_INSTANCE_ID"] = strings.TrimSpace(instanceId)
-	}
-
-	if accessKey != "" && secretKey != "" {
-		secrets["AWS_ACCESS_KEY_ID"] = strings.TrimSpace(accessKey)
-		secrets["AWS_SECRET_ACCESS_KEY"] = strings.TrimSpace(secretKey)
+		"EC2_HOST":    strings.TrimSpace(instanceIp),
+		"EC2_SSH_KEY": strings.TrimSpace(sshKey),
 	}
 
 	// -----------------------------------------------------------------------
