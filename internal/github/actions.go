@@ -150,9 +150,7 @@ jobs:
         run: docker build -t app .
 
       - name: Save Docker Image
-        run: |
-          docker save -o app.tar app
-          sudo chmod 666 app.tar
+        run: docker save app > app.tar
 
       - name: Transfer Image to EC2
         uses: appleboy/scp-action@v0.1.7
