@@ -387,9 +387,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 	// Build the set of GitHub Actions secrets.
 	ui.PrintInfo("Securing GitHub Actions environment...")
-	secrets := map[string]string{
-		"EC2_HOST":    strings.TrimSpace(instanceIp),
-		"EC2_SSH_KEY": strings.TrimSpace(sshKey),
+	secrets := map[string]string{}
+	
+	if providerID == string(platform.ProviderAWS) {
+		secrets["EC2_HOST"] = strings.TrimSpace(instanceIp)
+		secrets["EC2_SSH_KEY"] = strings.TrimSpace(sshKey)
 	}
 
 	// -----------------------------------------------------------------------
@@ -404,8 +406,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		ui.PrintError("GitHub repository synchronization failed", err.Error())
 		fmt.Println("\n  ✓ AWS infrastructure deployed")
 		fmt.Println("  ✓ EC2 instance ready")
-		fmt.Println("  ✓ ECR registry ready")
-		fmt.Println("  ✓ IAM OIDC role ready")
+		fmt.Println("  ✓ SSH key generated")
 		fmt.Println("\n  ✕ GitHub repository synchronization failed")
 		fmt.Println("\n  Reason:\n    GitHub authentication failed, missing 'workflow' token scope, or unresolved merge conflicts.")
 		fmt.Println("\n  Nothing else needs to be provisioned on AWS.")
