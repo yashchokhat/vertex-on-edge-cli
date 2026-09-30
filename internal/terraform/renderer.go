@@ -9,8 +9,17 @@ import (
 	"github.com/yashchokhat/vertex-on-edge/internal/terraform/aws/ec2"
 )
 
+// boolVars lists Terraform variable names that should be rendered as bare
+// true/false (no quotes) in terraform.tfvars.
+var boolVars = map[string]bool{
+	"create_vpc":           true,
+	"create_subnet":        true,
+	"create_oidc_provider": true,
+}
+
 // RenderTemplates copies the embedded Terraform templates for the selected cloud provider
-// and target into the specified project directory.
+// and target into the specified project directory. It also generates a terraform.tfvars
+// file from the provided variables map.
 func RenderTemplates(projectDir, provider, target string, variables map[string]string) (string, error) {
 	tfDir := filepath.Join(projectDir, ".vertex-on-edge", "terraform", provider, target)
 	err := os.MkdirAll(tfDir, 0755)
@@ -53,8 +62,12 @@ func RenderTemplates(projectDir, provider, target string, variables map[string]s
 	// Generate terraform.tfvars
 	var tfvars string
 	for k, v := range variables {
-		// Very basic escaping for string variables
-		tfvars += fmt.Sprintf("%s = \"%s\"\n", k, v)
+		if boolVars[k] {
+			// Boolean values should not be quoted.
+			tfvars += fmt.Sprintf("%s = %s\n", k, v)
+		} else {
+			tfvars += fmt.Sprintf("%s = \"%s\"\n", k, v)
+		}
 	}
 
 	err = os.WriteFile(filepath.Join(tfDir, "terraform.tfvars"), []byte(tfvars), 0644)

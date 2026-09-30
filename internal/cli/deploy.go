@@ -26,22 +26,39 @@ import (
 var deployCmd = &cobra.Command{
 	Use:   "deploy",
 	Short: "Deploy the application to the cloud",
-	RunE:  runDeploy,
+	Long: `Deploy your application to the cloud with a single command.
+
+This walks you through project detection, cloud provider selection,
+infrastructure provisioning (via Terraform), and CI/CD pipeline
+configuration (via GitHub Actions).`,
+	RunE: runDeploy,
 }
 
 func init() {
 	rootCmd.AddCommand(deployCmd)
 }
 
+// runDeploy is the main deployment orchestrator. It follows a strict sequence:
+//
+//  1. Environment check (Git, Docker, Terraform)
+//  2. GitHub and AWS authentication
+//  3. Project selection and framework detection
+//  4. Cloud provider and deployment target selection
+//  5. AWS infrastructure configuration (VPC, Subnet, Key Pair)
+//  6. CI/CD file generation (Dockerfile, GitHub Actions workflows)
+//  7. Terraform init, validate, plan, and apply
+//  8. Post-apply validation (OIDC, role ARN from Terraform outputs)
+//  9. GitHub secrets injection and repository push
 func runDeploy(cmd *cobra.Command, args []string) error {
 	ui.RunStartupAnimation()
 	ui.PrintBanner()
 	ui.PrintWelcome()
 
-	// 1. Startup Check
+	// -----------------------------------------------------------------------
+	// Step 1: Environment Check
+	// -----------------------------------------------------------------------
 	ui.PrintInfo("Checking environment...")
 
-	// Check Git
 	if _, err := exec.LookPath("git"); err != nil {
 		ui.PrintError("Git is not installed", "Git is required for deployments.")
 		ui.PrintInfo("Install guide: https://git-scm.com/downloads")
@@ -49,7 +66,6 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("  ✓ Git")
 
-	// Check Docker
 	if _, err := exec.LookPath("docker"); err != nil {
 		ui.PrintError("Docker is not installed", "Docker is required to build containers.")
 		ui.PrintInfo("Install guide: https://docs.docker.com/get-docker/")
@@ -57,7 +73,6 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("  ✓ Docker")
 
-	// Check Terraform
 	if _, err := exec.LookPath("terraform"); err != nil {
 		fmt.Println("  ✕ Terraform is missing")
 		if !dependencies.CheckAndInstall("terraform", "Terraform") {
@@ -72,7 +87,9 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
-	// 2. Authentication
+	// -----------------------------------------------------------------------
+	// Step 2: Authentication
+	// -----------------------------------------------------------------------
 	ui.PrintInfo("Authentication")
 
 	if !dependencies.CheckAndInstall("gh", "GitHub CLI (gh)") {
@@ -93,11 +110,13 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// 3. Project Selection
+	// -----------------------------------------------------------------------
+	// Step 3: Project Selection
+	// -----------------------------------------------------------------------
 	projectPath := ui.PromptProjectPath()
 	ui.PrintSuccess(fmt.Sprintf("Project selected: %s\n", projectPath))
 
-	// 3.5 Check for existing configuration
+	// Check for an existing Vertex-on-Edge configuration in this project.
 	hasConfig, configuredProvider, configuredTarget, tfDir := platform.DetectExistingConfig(projectPath)
 
 	action := "edit"
@@ -113,9 +132,11 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	var spinner *ui.Spinner
 
 	if action == "edit" {
-		// --- CONFIGURATION WIZARD ---
+		// -------------------------------------------------------------------
+		// Configuration Wizard (edit / first-time setup)
+		// -------------------------------------------------------------------
 
-		// 4. Framework Detection
+		// Step 4: Framework Detection
 		d := detector.New()
 		spinner = ui.SpinnerStart("Detecting project stack...")
 		info, dErr := d.Detect(projectPath)
@@ -146,10 +167,12 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			ui.PromptMissingDetails(primary)
 		}
 
-		// 5. Cloud Selection
+		// Step 5: Cloud Provider Selection
 		selectedProviderID := ui.PromptCloudProvider()
 		providerID = string(selectedProviderID)
 
+		// AWS-specific authentication and region selection.
+		var infraChoices ui.AWSInfraChoices
 		if selectedProviderID == platform.ProviderAWS {
 			if !dependencies.CheckAndInstall("aws", "AWS CLI") {
 				ui.PrintInfo("Continuing without AWS auth. Cloud deployment step will likely fail later.")
@@ -169,20 +192,27 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 				}
 			}
 
-			// Phase 1: Verify AWS Access
+			// Show the connected AWS account ID.
 			if callerOut, err := exec.Command("aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text").Output(); err == nil {
 				ui.PrintInfo(fmt.Sprintf("AWS Account ID: %s", strings.TrimSpace(string(callerOut))))
 			}
+
+			// Prompt for AWS region.
+			awsRegion = ui.PromptAWSRegion()
+
+			// Prompt for VPC, Subnet, Key Pair.
+			infraChoices = ui.PromptAWSInfrastructure()
+			infraChoices.AWSRegion = awsRegion
 		}
 
-		// 6. Target Selection
+		// Step 6: Target Selection
 		selectedTargetID := ui.PromptDeploymentTarget(selectedProviderID)
 		targetID = string(selectedTargetID)
 
-		// 7. Testing Strategy
+		// Step 7: Testing Strategy
 		testingFrameworks := ui.PromptTestingFramework(primary.Language, primary.Framework)
 
-		// 8. Generate Project Files (Dockerfile & GitHub Actions) in parallel
+		// Step 8: Generate CI/CD Pipeline Files
 		ui.PrintInfo("Generating CI/CD pipeline...")
 
 		var genWg sync.WaitGroup
@@ -217,52 +247,16 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 
 		genWg.Wait()
 
-		// 9. Cloud Configuration
+		// Step 9: Resolve GitHub Repository Identity
 		ui.PrintInfo(fmt.Sprintf("Configuring deployment for %s on %s...", primary.Framework, targetID))
 
 		exactRepoName = info.Name
 		safeProjectName = strings.ToLower(strings.ReplaceAll(info.Name, " ", "-"))
 
-		// Phase 2: Detect GitHub Repository (do not hardcode owner or assume directory name matches repo)
-		githubOwner := os.Getenv("USER") // Global Fallback if all GitHub APIs fail
-		
-		// Attempt to get the actual remote repository identity if it exists
-		ghRepoViewCmd := exec.Command("gh", "repo", "view", "--json", "owner,name", "-q", ".owner.login + \"/\" + .name")
-		ghRepoViewCmd.Dir = projectPath
-		if repoInfo, err := ghRepoViewCmd.Output(); err == nil {
-			parts := strings.Split(strings.TrimSpace(string(repoInfo)), "/")
-			if len(parts) == 2 {
-				githubOwner = parts[0]
-				exactRepoName = parts[1] // Override the local directory name with the true remote repo name
-			}
-		} else {
-			// Fallback for brand new projects that aren't on GitHub yet
-			ghApiUserCmd := exec.Command("gh", "api", "user", "-q", ".login")
-			if ghUser, err := ghApiUserCmd.Output(); err == nil {
-				githubOwner = strings.TrimSpace(string(ghUser))
-			}
-			
-			// Try to extract from git remote if gh repo view failed
-			gitRemoteCmd := exec.Command("git", "-C", projectPath, "remote", "get-url", "origin")
-			if remoteOut, err := gitRemoteCmd.Output(); err == nil {
-				remoteStr := strings.TrimSpace(string(remoteOut))
-				// Handle both HTTPS and SSH urls
-				if strings.HasPrefix(remoteStr, "https://github.com/") {
-					parts := strings.Split(strings.TrimPrefix(remoteStr, "https://github.com/"), "/")
-					if len(parts) >= 2 {
-						githubOwner = parts[0]
-						exactRepoName = strings.TrimSuffix(parts[1], ".git")
-					}
-				} else if strings.HasPrefix(remoteStr, "git@github.com:") {
-					parts := strings.Split(strings.TrimPrefix(remoteStr, "git@github.com:"), "/")
-					if len(parts) >= 2 {
-						githubOwner = parts[0]
-						exactRepoName = strings.TrimSuffix(parts[1], ".git")
-					}
-				}
-			}
-		}
+		githubOwner := resolveGitHubOwner(projectPath)
+		exactRepoName = resolveGitHubRepoName(projectPath, exactRepoName)
 
+		// Build Terraform variables map.
 		vars := map[string]string{
 			"aws_region":        awsRegion,
 			"project_name":      safeProjectName,
@@ -272,7 +266,22 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 			"github_repository": exactRepoName,
 		}
 
-
+		// Inject the infrastructure choices into Terraform variables.
+		if providerID == "aws" {
+			if infraChoices.CreateVPC {
+				vars["create_vpc"] = "true"
+			} else {
+				vars["create_vpc"] = "false"
+			}
+			if infraChoices.CreateSubnet {
+				vars["create_subnet"] = "true"
+			} else {
+				vars["create_subnet"] = "false"
+			}
+			if infraChoices.ExistingKeyPairName != "" {
+				vars["existing_key_pair_name"] = infraChoices.ExistingKeyPairName
+			}
+		}
 
 		tfDir, err = terraform.RenderTemplates(projectPath, providerID, targetID, vars)
 		if err != nil {
@@ -281,68 +290,26 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		}
 		ui.PrintSuccess(fmt.Sprintf("Terraform templates generated at %s", tfDir))
 	} else {
-		// --- FAST DEPLOY ---
+		// -------------------------------------------------------------------
+		// Fast Deploy (reuse existing config)
+		// -------------------------------------------------------------------
 		ui.PrintInfo("Using existing Vertex-on-Edge configuration...")
 		providerID = configuredProvider
 		targetID = configuredTarget
 
-		githubOwner := os.Getenv("USER")
 		exactRepoName = filepath.Base(projectPath)
-		fastRepoViewCmd := exec.Command("gh", "repo", "view", "--json", "owner,name", "-q", ".owner.login + \"/\" + .name")
-		fastRepoViewCmd.Dir = projectPath
-		if repoInfo, err := fastRepoViewCmd.Output(); err == nil {
-			parts := strings.Split(strings.TrimSpace(string(repoInfo)), "/")
-			if len(parts) == 2 {
-				githubOwner = parts[0]
-				exactRepoName = parts[1]
-			}
-		} else {
-			// Fallback for brand new projects that aren't on GitHub yet
-			ghApiUserCmd := exec.Command("gh", "api", "user", "-q", ".login")
-			if ghUser, err := ghApiUserCmd.Output(); err == nil {
-				githubOwner = strings.TrimSpace(string(ghUser))
-			}
-			
-			// Try to extract from git remote if gh repo view failed
-			gitRemoteCmd := exec.Command("git", "-C", projectPath, "remote", "get-url", "origin")
-			if remoteOut, err := gitRemoteCmd.Output(); err == nil {
-				remoteStr := strings.TrimSpace(string(remoteOut))
-				// Handle both HTTPS and SSH urls
-				if strings.HasPrefix(remoteStr, "https://github.com/") {
-					parts := strings.Split(strings.TrimPrefix(remoteStr, "https://github.com/"), "/")
-					if len(parts) >= 2 {
-						githubOwner = parts[0]
-						exactRepoName = strings.TrimSuffix(parts[1], ".git")
-					}
-				} else if strings.HasPrefix(remoteStr, "git@github.com:") {
-					parts := strings.Split(strings.TrimPrefix(remoteStr, "git@github.com:"), "/")
-					if len(parts) >= 2 {
-						githubOwner = parts[0]
-						exactRepoName = strings.TrimSuffix(parts[1], ".git")
-					}
-				}
-			}
-		}
+		githubOwner := resolveGitHubOwner(projectPath)
+		exactRepoName = resolveGitHubRepoName(projectPath, exactRepoName)
 		safeProjectName = strings.ToLower(strings.ReplaceAll(exactRepoName, " ", "-"))
 
-		// Synchronize Terraform variables to the current GitHub repository context
-		// This strictly guarantees the IAM Trust Policy will accept OIDC requests from the current repo
-		if githubOwner != "" && exactRepoName != "" {
-			tfVarsPath := filepath.Join(tfDir, "terraform.tfvars")
-			if tfVarsData, err := os.ReadFile(tfVarsPath); err == nil {
-				lines := strings.Split(string(tfVarsData), "\n")
-				for i, line := range lines {
-					if strings.HasPrefix(line, "github_owner ") || strings.HasPrefix(line, "github_owner=") {
-						lines[i] = fmt.Sprintf("github_owner = \"%s\"", githubOwner)
-					} else if strings.HasPrefix(line, "github_repository ") || strings.HasPrefix(line, "github_repository=") {
-						lines[i] = fmt.Sprintf("github_repository = \"%s\"", exactRepoName)
-					}
-				}
-				os.WriteFile(tfVarsPath, []byte(strings.Join(lines, "\n")), 0644)
-			}
-		}
+		// Keep Terraform variables in sync with the current GitHub repo identity,
+		// so the IAM trust policy matches on the next apply.
+		syncTfVarsGitHub(tfDir, githubOwner, exactRepoName)
 	}
 
+	// -----------------------------------------------------------------------
+	// Step 10: Terraform Init, Validate, Plan, Apply
+	// -----------------------------------------------------------------------
 	runner := terraform.NewLocalRunner(tfDir)
 
 	spinner = ui.SpinnerStart("Initializing Terraform...")
@@ -363,6 +330,7 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 	spinner.Stop(true)
 
+	// Reconcile existing AWS resources into the Terraform state.
 	if providerID == string(platform.ProviderAWS) {
 		if err := ReconcileAWSInfrastructure(runner, safeProjectName, awsRegion); err != nil {
 			ui.PrintError("Reconciliation Failed", err.Error())
@@ -393,72 +361,53 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 	}
 	ui.PrintSuccess("Infrastructure deployed successfully!")
 
-	// 10. Extract Outputs & Configure CI/CD
+	// -----------------------------------------------------------------------
+	// Step 11: Post-Apply -- Read outputs and configure GitHub secrets
+	// -----------------------------------------------------------------------
 	ui.PrintInfo("Extracting infrastructure outputs...")
-
-
-
-	if providerID == string(platform.ProviderAWS) {
-		// Validate OIDC Provider exists
-		checkCmd := exec.Command("aws", "iam", "list-open-id-connect-providers", "--query", "OpenIDConnectProviderList[*].Arn", "--output", "text")
-		if out, err := checkCmd.Output(); err == nil {
-			outputStr := string(out)
-			if !strings.Contains(outputStr, "token.actions.githubusercontent.com") {
-				ui.PrintError("OIDC_PROVIDER_MISSING", "The GitHub Actions OIDC provider could not be found in AWS. Ensure your AWS account permits OIDC provider creation.")
-				return nil
-			}
-		} else {
-			ui.PrintError("OIDC_PROVIDER_MISSING", "Failed to query AWS for OIDC providers: " + err.Error())
-			return nil
-		}
-
-		// Validate global IAM Role Trust Policy
-		roleName := "vertexOnEdge-cli"
-		trustCmd := exec.Command("aws", "iam", "get-role", "--role-name", roleName, "--query", "Role.AssumeRolePolicyDocument", "--output", "json")
-		if out, err := trustCmd.Output(); err == nil {
-			if !strings.Contains(string(out), "token.actions.githubusercontent.com") {
-				ui.PrintError("OIDC_ROLE_TRUST_INVALID", fmt.Sprintf("The IAM role '%s' does not correctly reference the GitHub OIDC provider.", roleName))
-				return nil
-			}
-		} else {
-			ui.PrintError("OIDC_ROLE_MISSING", "Failed to retrieve global IAM role trust policy (vertexOnEdge-cli): " + err.Error())
-			return nil
-		}
-
-		fmt.Println("    ✓  OIDC configured successfully")
-	}
 
 	appUrl, err := runner.Output("application_url")
 	if err != nil {
 		ui.PrintError("Failed to get Application URL from Terraform", err.Error())
 	}
-	
-	instanceId, err := runner.Output("instance_id")
-	if err != nil {
-		// Non-fatal, just a warning if it doesn't exist yet
+
+	instanceId, _ := runner.Output("instance_id")
+
+	// Read the Role ARN directly from Terraform outputs.
+	// This is the per-project OIDC role that Terraform just created,
+	// not a manually-constructed ARN.
+	roleArn, roleErr := runner.Output("github_actions_role_arn")
+
+	if providerID == string(platform.ProviderAWS) {
+		if roleErr != nil || roleArn == "" {
+			ui.PrintError("OIDC_ROLE_MISSING", "Failed to read the GitHub Actions IAM role ARN from Terraform outputs.")
+			ui.PrintInfo("Check that the Terraform apply completed successfully and that outputs.tf includes github_actions_role_arn.")
+			return nil
+		}
+
+		fmt.Println("    ✓  OIDC provider configured")
+		fmt.Println("    ✓  GitHub Actions IAM role created")
+		fmt.Printf("    ✓  Role ARN: %s\n", strings.TrimSpace(roleArn))
 	}
 
+	// Build the set of GitHub Actions secrets.
 	ui.PrintInfo("Securing GitHub Actions environment...")
 	secrets := map[string]string{
 		"AWS_REGION":          awsRegion,
 		"ECR_REPOSITORY_NAME": safeProjectName,
 	}
-	
+
 	if instanceId != "" {
 		secrets["EC2_INSTANCE_ID"] = strings.TrimSpace(instanceId)
 	}
 
-	// Inject the global vertexOnEdge-cli IAM role ARN
-	accountIDOut, err := exec.Command("aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text").Output()
-	if err == nil {
-		accountID := strings.TrimSpace(string(accountIDOut))
-		if accountID != "" {
-			secrets["AWS_ROLE_ARN"] = "arn:aws:iam::" + accountID + ":role/vertexOnEdge-cli"
-		}
+	if roleArn != "" {
+		secrets["AWS_ROLE_ARN"] = strings.TrimSpace(roleArn)
 	}
 
-
-
+	// -----------------------------------------------------------------------
+	// Step 12: Push to GitHub and inject secrets
+	// -----------------------------------------------------------------------
 	spinner = ui.SpinnerStart("Initializing GitHub configuration...")
 	err = ghactions.InitAndPush(projectPath, exactRepoName, secrets, func(status string) {
 		spinner.Update(status)
@@ -473,17 +422,130 @@ func runDeploy(cmd *cobra.Command, args []string) error {
 		fmt.Println("\n  ✕ GitHub repository synchronization failed")
 		fmt.Println("\n  Reason:\n    GitHub authentication failed, missing 'workflow' token scope, or unresolved merge conflicts.")
 		fmt.Println("\n  Nothing else needs to be provisioned on AWS.")
-		// We could add a resume command here later
 		return err
-	} else {
-		spinner.Stop(true)
-		ui.PrintSuccess("Repository pushed to GitHub with secure CI/CD secrets!")
-		ui.PrintSuccess("Vertex-on-Edge Deployment Handoff Complete!")
-		if appUrl != "" {
-			fmt.Printf("\n  Your application will be live at: %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#00B4D8")).Render(strings.TrimSpace(appUrl)))
-			fmt.Printf("  (Please allow 3-5 minutes for the first GitHub Actions pipeline to finish building and deploying your container.)\n\n")
-		}
+	}
+
+	spinner.Stop(true)
+	ui.PrintSuccess("Repository pushed to GitHub with secure CI/CD secrets!")
+	ui.PrintSuccess("Vertex-on-Edge Deployment Handoff Complete!")
+	if appUrl != "" {
+		fmt.Printf("\n  Your application will be live at: %s\n", lipgloss.NewStyle().Foreground(lipgloss.Color("#00B4D8")).Render(strings.TrimSpace(appUrl)))
+		fmt.Printf("  (Please allow 3-5 minutes for the first GitHub Actions pipeline to finish building and deploying your container.)\n\n")
 	}
 
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// resolveGitHubOwner determines the GitHub owner (username or org) for the
+// current project. It tries: gh repo view -> gh api user -> git remote -> $USER.
+func resolveGitHubOwner(projectPath string) string {
+	// Try gh repo view first (works when the repo already exists on GitHub).
+	ghRepoViewCmd := exec.Command("gh", "repo", "view", "--json", "owner,name", "-q", ".owner.login + \"/\" + .name")
+	ghRepoViewCmd.Dir = projectPath
+	if repoInfo, err := ghRepoViewCmd.Output(); err == nil {
+		parts := strings.Split(strings.TrimSpace(string(repoInfo)), "/")
+		if len(parts) == 2 {
+			return parts[0]
+		}
+	}
+
+	// Fallback: ask the GitHub API for the authenticated user.
+	ghApiUserCmd := exec.Command("gh", "api", "user", "-q", ".login")
+	if ghUser, err := ghApiUserCmd.Output(); err == nil {
+		if owner := strings.TrimSpace(string(ghUser)); owner != "" {
+			return owner
+		}
+	}
+
+	// Fallback: parse from git remote.
+	gitRemoteCmd := exec.Command("git", "-C", projectPath, "remote", "get-url", "origin")
+	if remoteOut, err := gitRemoteCmd.Output(); err == nil {
+		if owner := parseGitHubOwnerFromRemote(strings.TrimSpace(string(remoteOut))); owner != "" {
+			return owner
+		}
+	}
+
+	// Last resort.
+	return os.Getenv("USER")
+}
+
+// resolveGitHubRepoName determines the GitHub repository name. It prefers
+// the remote identity over the local directory name.
+func resolveGitHubRepoName(projectPath, fallback string) string {
+	ghRepoViewCmd := exec.Command("gh", "repo", "view", "--json", "owner,name", "-q", ".owner.login + \"/\" + .name")
+	ghRepoViewCmd.Dir = projectPath
+	if repoInfo, err := ghRepoViewCmd.Output(); err == nil {
+		parts := strings.Split(strings.TrimSpace(string(repoInfo)), "/")
+		if len(parts) == 2 {
+			return parts[1]
+		}
+	}
+
+	// Try git remote origin.
+	gitRemoteCmd := exec.Command("git", "-C", projectPath, "remote", "get-url", "origin")
+	if remoteOut, err := gitRemoteCmd.Output(); err == nil {
+		if repo := parseGitHubRepoFromRemote(strings.TrimSpace(string(remoteOut))); repo != "" {
+			return repo
+		}
+	}
+
+	return fallback
+}
+
+// parseGitHubOwnerFromRemote extracts the owner from an HTTPS or SSH GitHub URL.
+func parseGitHubOwnerFromRemote(remote string) string {
+	if strings.HasPrefix(remote, "https://github.com/") {
+		parts := strings.Split(strings.TrimPrefix(remote, "https://github.com/"), "/")
+		if len(parts) >= 2 {
+			return parts[0]
+		}
+	} else if strings.HasPrefix(remote, "git@github.com:") {
+		parts := strings.Split(strings.TrimPrefix(remote, "git@github.com:"), "/")
+		if len(parts) >= 2 {
+			return parts[0]
+		}
+	}
+	return ""
+}
+
+// parseGitHubRepoFromRemote extracts the repo name from an HTTPS or SSH GitHub URL.
+func parseGitHubRepoFromRemote(remote string) string {
+	if strings.HasPrefix(remote, "https://github.com/") {
+		parts := strings.Split(strings.TrimPrefix(remote, "https://github.com/"), "/")
+		if len(parts) >= 2 {
+			return strings.TrimSuffix(parts[1], ".git")
+		}
+	} else if strings.HasPrefix(remote, "git@github.com:") {
+		parts := strings.Split(strings.TrimPrefix(remote, "git@github.com:"), "/")
+		if len(parts) >= 2 {
+			return strings.TrimSuffix(parts[1], ".git")
+		}
+	}
+	return ""
+}
+
+// syncTfVarsGitHub updates github_owner and github_repository in an existing
+// terraform.tfvars file so the trust policy stays in sync when fast-deploying.
+func syncTfVarsGitHub(tfDir, githubOwner, exactRepoName string) {
+	if githubOwner == "" || exactRepoName == "" {
+		return
+	}
+	tfVarsPath := filepath.Join(tfDir, "terraform.tfvars")
+	tfVarsData, err := os.ReadFile(tfVarsPath)
+	if err != nil {
+		return
+	}
+	lines := strings.Split(string(tfVarsData), "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "github_owner ") || strings.HasPrefix(line, "github_owner=") {
+			lines[i] = fmt.Sprintf("github_owner = \"%s\"", githubOwner)
+		} else if strings.HasPrefix(line, "github_repository ") || strings.HasPrefix(line, "github_repository=") {
+			lines[i] = fmt.Sprintf("github_repository = \"%s\"", exactRepoName)
+		}
+	}
+	os.WriteFile(tfVarsPath, []byte(strings.Join(lines, "\n")), 0644)
 }

@@ -13,8 +13,8 @@ func PromptExistingConfig() string {
 	err := huh.NewSelect[string]().
 		Title("Existing configuration detected. What would you like to do?").
 		Options(
-			huh.NewOption("🚀 Fast Deploy (Use existing configuration)", "deploy"),
-			huh.NewOption("⚙️ Edit Configuration (Re-run setup wizard)", "edit"),
+			huh.NewOption("Fast Deploy (Use existing configuration)", "deploy"),
+			huh.NewOption("Edit Configuration (Re-run setup wizard)", "edit"),
 		).
 		Value(&selected).
 		Run()

@@ -1,3 +1,8 @@
+output "instance_id" {
+  description = "ID of the EC2 instance"
+  value       = aws_instance.app_server.id
+}
+
 output "instance_public_ip" {
   description = "Public IP address of the EC2 instance"
   value       = aws_instance.app_server.public_ip
@@ -18,9 +23,13 @@ output "registry_url" {
   value       = aws_ecr_repository.app.repository_url
 }
 
-output "ssh_private_key" {
-  description = "Private key for SSH access (sensitive)"
-  value       = tls_private_key.ssh_key.private_key_pem
-  sensitive   = true
+output "github_actions_role_arn" {
+  description = "ARN of the IAM role for GitHub Actions OIDC authentication"
+  value       = aws_iam_role.github_actions_role.arn
 }
 
+output "ssh_private_key" {
+  description = "Private key for SSH access (only available when auto-generating a key pair)"
+  value       = var.existing_key_pair_name == "" ? tls_private_key.ssh_key[0].private_key_pem : "Using existing key pair: ${var.existing_key_pair_name}"
+  sensitive   = true
+}
