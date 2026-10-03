@@ -4,7 +4,7 @@
 
 Vertex-on-Edge is a Go-based command-line interface that automates the transition from a local project directory to a fully deployed cloud application.
 
-![Vertex-on-Edge CLI](Snapshot/CLI.png)
+![Vertex-on-Edge CLI](Snapshot/VERTEXonEDGE.jpeg)
 
 ## What It Does
 
