@@ -1,5 +1,7 @@
 # Vertex-on-Edge
 
+[![Architecture diagram of yashchokhat/vertex-on-edge-cli](https://gitdiagram.com/yashchokhat/vertex-on-edge-cli/diagram.png)](https://gitdiagram.com/yashchokhat/vertex-on-edge-cli?utm_source=readme&utm_medium=picture)
+
 Vertex-on-Edge is a Go-based command-line interface that automates the transition from a local project directory to a fully deployed cloud application.
 
 ![Vertex-on-Edge CLI](Snapshot/CLI.png)
